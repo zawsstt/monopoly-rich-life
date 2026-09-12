@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>大富翁 · 富贵人生</title>
+<link rel="icon" href="assets/img/ico_coin.png?v=42">
+<link rel="stylesheet" href="css/style.css?v=43">
+<script>
+/* 最早的错误收集器：在任何游戏脚本之前挂载 */
+window.__errs = [];
+window.addEventListener('error', function (e) {
+  window.__errs.push(String(e.message) + ' @ ' + String(e.filename || '').split('/').pop() + ':' + e.lineno);
+});
+window.addEventListener('unhandledrejection', function (e) {
+  var r = e.reason && e.reason.stack ? e.reason.stack : String(e.reason);
+  window.__errs.push('rej: ' + String(r).slice(0, 300));
+});
+</script>
+</head>
+<body>
+
+<!-- 全局层 -->
+<canvas id="confetti"></canvas>
+<div id="modal-root"></div>
+<div id="pickbar">
+  <span>🎯 点击棋盘上的目标格子</span>
+  <button id="btn-cancel-pick" class="btn btn-ghost btn-mini">取消</button>
+</div>
+
+<!-- ========== 开始界面 ========== -->
+<div id="start-screen">
+  <div class="hero">
+    <div class="hero-title">大富翁</div>
+    <div class="hero-sub">— 富 贵 人 生 · <b>WEB 版</b> —</div>
+
+  </div>
+
+  <div id="char-grid"></div>
+
+  <div class="opts">
+    <div class="opt-group"><b>你的名号</b><input id="opt-name" maxlength="10" placeholder="起个响亮的名号" style="background:#0a1f14;border:1px solid rgba(240,180,41,.35);border-radius:8px;color:#ffe9a8;font:700 14px 'Microsoft YaHei',sans-serif;padding:7px 12px;width:150px;outline:none" /></div>
+      <div class="opt-group"><b>对手数量</b>
+      <span id="opt-ai">
+        <button data-n="1">1</button>
+        <button data-n="2">2</button>
+        <button data-n="3" class="on">3</button>
+      </span>
+    </div>
+    <div class="opt-group"><b>初始资金</b>
+      <select id="opt-money">
+        <option value="20000">$20,000（紧张）</option>
+        <option value="30000" selected>$30,000（标准）</option>
+        <option value="50000">$50,000（富裕）</option>
+      </select>
+    </div>
+    <div class="opt-group"><b>回合上限</b>
+      <select id="opt-rounds">
+        <option value="20">20 回合</option>
+        <option value="30">30 回合</option>
+        <option value="50">50 回合</option>
+        <option value="0" selected>不限回合 · 角逐最后赢家</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="start-actions">
+    <button id="btn-start" class="btn btn-primary">开 始 游 戏</button>
+    <button id="btn-watch" class="btn btn-ghost">👀 观战模式（4 AI）</button>
+    <button id="btn-net" class="btn btn-ghost">🌐 联机对战</button>
+      <button id="btn-records" class="btn btn-ghost">🏆 排行榜</button>
+      </div>
+      <div class="world-lore">
+        <p class="wl-main">传闻这座城里，六位奇人共守一张书桌沙盘——掷下骰子，买地起楼，坐地收租；<i>哪怕进了局子，也只是命运的又一次洗牌。</i></p>
+        <p class="wl-sub">骰子落定的那一刻，命运开始流转。<span>买下你的第一块地，让全城都姓你的姓。</span></p>
+      </div>
+    
+  <div id="net-lobby" class="hidden">
+    <div class="net-box" id="net-chooser">
+      <div class="net-title">🌐 联机对战</div>
+      <div class="net-hint">基于 P2P 直连（WebRTC），无需服务器；创建房间后把房间码发给朋友即可。</div>
+      <div class="net-actions center">
+        <button id="net-create" class="btn btn-primary">🏠 创建房间</button>
+        <button id="net-join-open" class="btn btn-ghost">🔗 加入房间</button>
+        <button id="net-close" class="btn btn-ghost">返回</button>
+      </div>
+    </div>
+    <div class="net-box hidden" id="net-host-box">
+      <div class="net-title">🏠 房间已创建</div>
+      <div class="net-code" id="net-code">·····</div>
+      <div class="net-hint">把房间码告诉朋友，朋友在「联机对战 → 加入房间」输入即可。</div>
+      <div id="net-guests" class="net-guests"><div class="net-hint">等待玩家加入…</div></div>
+      <div class="net-actions center">
+        <button id="net-launch" class="btn btn-primary">开始对局（空位补 AI）</button>
+        <button id="net-cancel" class="btn btn-ghost">取消</button>
+      </div>
+    </div>
+    <div class="net-box hidden" id="net-join-box">
+      <div class="net-title">🔗 加入房间</div>
+      <input id="net-join-code" class="net-input" placeholder="房间码（5 位）" maxlength="5">
+      <input id="net-join-name" class="net-input" placeholder="你的昵称" maxlength="10">
+      <div class="net-hint" id="net-waiting">加入后将自动分配角色</div>
+      <div class="net-actions center">
+        <button id="net-join-btn" class="btn btn-primary">加入</button>
+        <button id="net-join-cancel" class="btn btn-ghost">返回</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== 对局界面 ========== -->
+<div id="game-screen" class="hidden">
+  <header id="topbar">
+    <div class="logo-mini">大富翁<span>富贵人生</span></div>
+    <div id="hud-round">第 1 / 30 回合</div>
+    <div id="hud-season" style="display:none"></div>
+    <div class="tb-actions">
+      <button id="btn-speed" class="tb-btn" title="游戏速度">1×</button>
+      <button id="btn-sound" class="tb-btn" title="系统音效开关（骰子/事件等）">🔊</button>
+<button id="btn-bgm" class="tb-btn" title="游戏音乐开关" style="opacity:1">🎵</button>
+      <button id="btn-rules" class="tb-btn">📖 规则</button>
+      <button id="btn-restart" class="tb-btn">🔄 重开</button>
+      <button id="btn-menu" class="tb-btn">🏠 主菜单</button>
+    </div>
+  </header>
+
+  <div id="main">
+    <div id="board-wrap">
+      <div id="table-decor" aria-hidden="true">
+        <img src="assets/img/block.png" style="--x:3.5%;--y:14%;--r:-22deg;--s:.8">
+        <img src="assets/img/dice5.png" style="--x:95.5%;--y:10%;--r:16deg;--s:1">
+        <img src="assets/img/ico_coin.png" style="--x:96.5%;--y:80%;--r:24deg;--s:.9">
+        <img src="assets/img/ico_coin2.png" style="--x:2.5%;--y:84%;--r:-12deg;--s:.7">
+        <img src="assets/img/deck_destiny.png" style="--x:4.5%;--y:48%;--r:-28deg;--s:.55">
+        <img src="assets/img/dice2.png" style="--x:94.5%;--y:54%;--r:38deg;--s:.8">
+      </div>
+      <div id="board">
+        <div id="board-center">
+          <div class="ribbon-band" aria-hidden="true"><span>MONOPOLY · 富贵人生</span></div>
+          <div id="ticker"></div>
+          <div id="toasts"></div>
+          <div id="splash"></div>
+          <div class="bc-block bc-brand">
+            <div class="bc-logo">大富翁<i>富 贵 人 生</i></div>
+            <div class="pot-chip"><img src="assets/img/ico_coin.png" alt=""><div>奖池 <b id="pot-value">$0</b></div></div>
+          </div>
+          <div class="bc-block bc-action">
+            <div id="center-status">准备开始…</div>
+            <div id="dice-wrap"><div id="dice3d"></div></div>
+            <button id="btn-roll"><span>掷 骰 子</span><small>按 空格键 也可以</small></button>
+          </div>
+          <div class="bc-block bc-decks">
+            <div class="deckstack ds-chance"><img src="assets/img/deck_chance.png" alt="机会"><span>机 会</span></div>
+            <div class="deckstack ds-destiny"><img src="assets/img/deck_destiny.png" alt="命运"><span>命 运</span></div>
+          </div>
+        </div>
+        <div id="blocks"></div>
+        <div id="tokens"></div>
+      </div>
+    </div>
+
+    <aside id="side">
+      <div id="players"></div>
+      <div id="log-panel"><div id="log-feed"></div></div>
+      <div id="chat-panel" class="hidden">
+        <div id="chat-feed"></div>
+        <div id="chat-emoji"></div>
+        <div id="chat-row">
+          <input id="chat-input" maxlength="60" placeholder="和桌上的朋友聊两句…">
+          <button id="chat-send" class="btn btn-mini btn-primary">发送</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<script src="js/lib/three.min.js?v=42"></script>
+<script src="js/lib/peerjs.min.js?v=42"></script>
+<script src="src/data.js?v=42"></script>
+<script src="src/sfx.js?v=42"></script>
+<script src="src/bgm.js?v=42"></script>
+<script src="src/ai.js?v=42"></script>
+<script src="src/game.js?v=42"></script>
+<script src="src/uix.js?v=42"></script>
+<script src="src/net.js?v=42"></script>
+<script src="src/view3d.js?v=42"></script>
+<script src="src/buildings3d.js?v=42"></script>
+<script src="assets/models/props3d/prop_6.js?v=42"></script>
+<script src="assets/models/props3d/prop_3.js?v=42"></script>
+<script src="assets/models/props3d/prop_1.js?v=42"></script>
+<script src="assets/models/props3d/prop_8.js?v=42"></script>
+<script src="assets/models/props3d/prop_9.js?v=42"></script>
+<script src="assets/models/props3d/prop_13.js?v=42"></script>
+<script src="assets/models/props3d/prop_14.js?v=42"></script>
+<script src="assets/models/props3d/prop_10.js?v=42"></script>
+<script src="assets/models/props3d/prop_18.js?v=42"></script>
+<script src="assets/models/props3d/prop_16.js?v=42"></script>
+<script src="assets/models/props3d/prop_23.js?v=42"></script>
+<script src="assets/models/props3d/prop_19.js?v=42"></script>
+<script src="assets/models/props3d/prop_26.js?v=42"></script>
+<script src="assets/models/props3d/prop_24.js?v=42"></script>
+<script src="assets/models/props3d/prop_28.js?v=42"></script>
+<script src="assets/models/props3d/prop_21.js?v=42"></script>
+<script src="assets/models/props3d/prop_33.js?v=42"></script>
+<script src="assets/models/props3d/prop_30.js?v=42"></script>
+<script src="assets/models/props3d/prop_36.js?v=42"></script>
+<script src="assets/models/props3d/prop_34.js?v=42"></script>
+<script src="assets/models/props3d/prop_39.js?v=42"></script>
+<script src="assets/models/props3d/prop_38.js?v=42"></script>
+<script src="assets/models/specials3d/tile12_jail.js?v=42"></script>
+<script src="assets/models/specials3d/police_car.js?v=42"></script>
+<script src="assets/models/specials3d/tile15_station.js?v=42"></script>
+<script src="assets/models/specials3d/jet.js?v=42"></script>
+<script src="assets/models/specials3d/roadblock.js?v=42"></script>
+<script src="assets/models/specials3d/environment.js?v=42"></script>
+<script src="assets/models/chars3d/boss.js?v=42"></script>
+<script src="assets/models/chars3d/qian.js?v=42"></script>
+<script src="assets/models/chars3d/tang.js?v=42"></script>
+<script src="assets/models/chars3d/tu.js?v=42"></script>
+<script src="assets/models/chars3d/ren.js?v=42"></script>
+<script src="assets/models/chars3d/doudou.js?v=42"></script>
+<script src="assets/models/propFactories.js?v=42"></script>
+<script src="src/main.js?v=42"></script>
+<script>
+/* [assets] 运行时自检（模块 C）：素材全局对象计数 + 3D 视图状态，用户端自诊依据 */
+(function () {
+  function line(state) {
+    var c = window.Char3D ? Object.keys(window.Char3D).length : 0;
+    var p = window.Props3D ? Object.keys(window.Props3D).length : 0;
+    var s = window.Special3D ? Object.keys(window.Special3D).length : 0;
+    console.log('[assets] Char3D=' + c + ' Props3D=' + p + ' Special3D=' + s + ' view3d=' + state);
+  }
+  var threeOk = (typeof window.THREE !== 'undefined' && !!window.THREE.REVISION);
+  line(threeOk ? 'loaded' : 'off');            /* 脚本全部解析完即报（three/vendor 加载情况） */
+  window.addEventListener('load', function () { /* 开局后复查：v3d-on 由 V3D.initGameScene 挂上 */
+    var tries = 0;
+    var t = setInterval(function () {
+      tries++;
+      if (document.body.classList.contains('v3d-on')) { clearInterval(t); line('on'); }
+      else if (tries >= 60) { clearInterval(t); line('loaded'); }
+    }, 500);
+  });
+})();
+</script>
+</body>
+</html>
