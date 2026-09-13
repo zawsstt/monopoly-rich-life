@@ -82,6 +82,14 @@ function newGame(charIds, humanCharId, opts) {
     inJail: false, jailTurns: 0, skipNext: 0, shield: false,
     forcedDice: null, bailCards: 0, props: {},
   }));
+  /* 满级展示模式（?allmax=1）：22 地产全部拉到 lv4 城堡，玩家现金充足防破产打断 */
+  if (opts.allMax) {
+    G.players.forEach(p => { p.money = 999999; });
+    let ownerCycle = 0;
+    BOARD.forEach((t, i) => {
+      if (t.type === 'prop') { G.tiles[i].owner = ownerCycle % G.players.length; G.tiles[i].level = 4; ownerCycle++; }
+    });
+  }
   /* 自定义名号：人类玩家使用大厅输入的昵称 */
   if (opts.nickname) {
     const h = G.players.find(p => !p.ai);
