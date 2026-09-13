@@ -83,7 +83,7 @@ const main = (() => {
     $('#game-screen').classList.remove('hidden');
     G.speed = 1;
     $('#btn-speed').textContent = '1×';
-    newGame(chars, humanChar, { startMoney: cfg.startMoney, maxRounds: cfg.maxRounds, nickname: cfg.nickname || '', allMax: cfg.allMax });
+    newGame(chars, humanChar, { startMoney: cfg.startMoney, maxRounds: cfg.maxRounds, nickname: cfg.nickname || '' });
     BGM.setMode('game');
     if (cfg.spectate) ui.toast('👀 观战模式：四位 AI 正在对决', '👀');
   }
@@ -133,7 +133,6 @@ const main = (() => {
       aiCount: n - 1,
       startMoney: +q.get('money') || 9000,
       maxRounds: q.get('rounds') != null ? +q.get('rounds') : 6,
-      allMax: q.get('allmax') === '1',
       spectate: q.get('watch') === '1',
     };
     if (q.get('speed')) G.speed = Math.max(1, Math.min(2.4, +q.get('speed') || 1));
