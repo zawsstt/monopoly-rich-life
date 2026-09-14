@@ -20,6 +20,8 @@ const NET = (() => {
   let GH = null;                // 客人内置处理器表
   const seatTokens = new Map(); // token -> seat（房主：重连凭证）
   const disconnected = new Set(); // 房主：断线宽限中的座位
+  const dropTimers = new Map();   // 房主：seat -> 宽限到期定时器（到期交 AI）
+  const GRACE_MS = 90000;         // 断线宽限 90s（与房主端提示文案一致）
   const pendingBySeat = new Map(); // seat -> [{reqId,payload}]（断线期间的待决请求）
   let chatLog = [];             // 房主：聊天历史（最近 50 条）
   let hbTimer = null;
@@ -38,6 +40,11 @@ const NET = (() => {
 
   function emit(msg) { const h = handlers['user_' + msg.t]; if (h) h(msg); }
 
+  /* 房主视角：对局是否进行中（G 由 game.js 提供；net.js 单独加载时安全退化） */
+  function inGame() {
+    try { return typeof G !== 'undefined' && !!G && G.started && !G.over; } catch (e) { return false; }
+  }
+
   /* ---------- 房主 ---------- */
   function host(onReady, onFail) {
     isHost = true; active = true;
@@ -51,20 +58,32 @@ const NET = (() => {
         m.seat = seats.get(conn.peer);
         if (m.t === 'hello') {
           let seat = -1, token = null, rejoin = false, charId = null;
+          /* 令牌重连只在对局进行中生效（座位仍属于该玩家）；大厅阶段令牌作废，按新客人重新入座，
+           * 避免旧令牌把「已离开又回来的人」塞回一个大厅列表里不存在的座位（开局时会被当成 AI） */
           if (m.token && seatTokens.has(m.token)) {
-            seat = seatTokens.get(m.token);
-            token = m.token;
-            rejoin = disconnected.has(seat);
-            disconnected.delete(seat);
-            conns.set(seat, conn);
-            seats.set(conn.peer, seat);
-          } else {
+            if (inGame()) {
+              seat = seatTokens.get(m.token);
+              token = m.token;
+              rejoin = true;
+              disconnected.delete(seat);
+              if (dropTimers.has(seat)) { clearTimeout(dropTimers.get(seat)); dropTimers.delete(seat); }
+              const old = conns.get(seat);
+              if (old && old !== conn) { try { seats.delete(old.peer); old.close(); } catch (e) { /* */ } }
+              conns.set(seat, conn);
+              seats.set(conn.peer, seat);
+            } else {
+              seatTokens.delete(m.token);
+            }
+          }
+          if (seat < 0) {
             const info = handlers.user_hello ? (handlers.user_hello(m, conn) || {}) : {};
             seat = (typeof info === 'object') ? info.seat : info;
             charId = (typeof info === 'object') ? info.charId : null;
             if (seat >= 0) {
               conns.set(seat, conn);
               seats.set(conn.peer, seat);
+              /* 同座位旧令牌作废，只保留最新一枚 */
+              for (const [tk, s] of seatTokens) { if (s === seat) seatTokens.delete(tk); }
               token = 'tk' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
               seatTokens.set(token, seat);
             }
@@ -74,7 +93,8 @@ const NET = (() => {
             if (rejoin) {
               const h = handlers.user_rejoin;
               if (h) h(seat);
-              if (G.started) send(conn, { t: 'sync', snap: snapshot() });
+              /* 重连者往往是刷新过的空白页：先下发完整开局快照重建棋盘，再补发断线期间挂起的决策 */
+              send(conn, { t: 'start', cfg: { maxRounds: G.maxRounds }, snap: snapshot(), rejoin: true });
               const pend = pendingBySeat.get(seat);
               if (pend) { for (const pm of pend) send(conn, pm); }
             }
@@ -94,7 +114,32 @@ const NET = (() => {
       });
       conn.on('close', () => {
         const seat = seats.get(conn.peer);
-        if (seat != null) { conns.delete(seat); seats.delete(conn.peer); handlers.leave && handlers.leave(seat); }
+        seats.delete(conn.peer);
+        if (seat == null) return;
+        if (conns.get(seat) !== conn) return;   /* 该座位已被同一玩家的新连接接管（重连），旧连接关闭不作数 */
+        conns.delete(seat);
+        if (inGame() && G.players[seat] && G.players[seat].alive && !G.players[seat].ai) {
+          /* 对局中的人类座位：进入断线宽限（不立刻交给 AI），决策请求挂起等其重连；
+           * 宽限到期仍未回来 → 交 AI 接管并立即放行所有挂起决策（否则整桌卡等 120s 超时）。
+           * 注：原版 handlers.leave 键名与 NET.on 写入的 user_leave 不一致，离席/断线逻辑从未生效 */
+          disconnected.add(seat);
+          const h = handlers.user_drop;
+          if (h) h(seat);
+          if (dropTimers.has(seat)) clearTimeout(dropTimers.get(seat));
+          dropTimers.set(seat, setTimeout(() => {
+            dropTimers.delete(seat);
+            if (!disconnected.has(seat)) return;
+            disconnected.delete(seat);
+            const pend = pendingBySeat.get(seat) || [];
+            pendingBySeat.delete(seat);
+            pend.forEach(pm => resolveAsk(pm.reqId, null));
+            const hl = handlers.user_leave;
+            if (hl) hl(seat);
+          }, GRACE_MS));
+        } else {
+          const hl = handlers.user_leave;
+          if (hl) hl(seat);
+        }
       });
     });
   }
@@ -176,6 +221,8 @@ const NET = (() => {
   const MIRROR_FNS = ['log', 'toast', 'news', 'splash', 'moneyFloat', 'floatAt', 'flashTile',
     'setActive', 'setPhase', 'updateHUD', 'updatePlayers', 'renderBlocks', 'rideStart', 'rideEnd', 'propFanfare'];
   function installMirror() {
+    if (ui.__netMirror === true) return;   /* 房主「再来一局」会再次开局：防止二次包裹造成每条消息双发 */
+    ui.__netMirror = true;
     MIRROR_FNS.forEach(fn => {
       const orig = ui[fn];
       ui[fn] = function (...args) {
@@ -217,9 +264,10 @@ const NET = (() => {
   }
 
   function serializeArgs(fn, args) {
-    // moneyFloat / floatAt 的参数包含 DOM 相关值时无需转换；showCard 的 player 由 idx 还原
+    // showCard 的 player / moneyFloat 的 player / propFanfare 的 player 统一降维为 idx，客人侧由 idx 还原
     if (fn === 'showCard') return args.slice(0, 2);
     if (fn === 'propFanfare') return [args[0].idx, args[1]];
+    if (fn === 'moneyFloat') return [args[0] && args[0].idx != null ? args[0].idx : args[0], args[1]];   /* 此前整对象直传，客人 G.players[obj] 取空 → 飘字从不显示 */
     return args;
   }
 
@@ -388,6 +436,11 @@ const NET = (() => {
     try { if (peer) peer.destroy(); } catch (e) { /* */ }
     peer = null; active = false; isHost = false;
     conns.clear(); seats.clear(); hostConn = null; mySeat = -1;
+    /* 房主重建房间 / 回菜单：清掉上局的重连凭证与宽限状态，避免旧令牌串入新房间 */
+    seatTokens.clear(); disconnected.clear();
+    dropTimers.forEach(t => clearTimeout(t)); dropTimers.clear();
+    pendingBySeat.clear();
+    if (hbTimer) { clearInterval(hbTimer); hbTimer = null; }
   }
 
   return {
