@@ -9,6 +9,7 @@ const main = (() => {
 
   let selectedChar = CHARACTERS[0].id;
   let aiCount = 3;
+  let humanCount = 1;      // 同屏本地玩家数（1 = 单人 vs AI；2–4 = 同一台电脑轮流操作）
   let lastConfig = null;
 
   function buildCharCards() {
@@ -41,10 +42,12 @@ const main = (() => {
       $$('#opt-ai button').forEach(x => x.classList.toggle('on', x === b));
       SFX.click();
     }));
+    injectHotseatOption();
     $('#btn-start').addEventListener('click', () => {
       SFX.unlock();
       startMatch({
         aiCount,
+        humans: humanCount,
         startMoney: +$('#opt-money').value,
         maxRounds: +$('#opt-rounds').value,
       });
@@ -53,6 +56,33 @@ const main = (() => {
       SFX.unlock();
       startMatch({ aiCount: 4, startMoney: +$('#opt-money').value, maxRounds: +$('#opt-rounds').value, spectate: true });
     });
+  }
+
+  /* 同屏多人（不改 index.html：运行时注入到「对手数量」旁）
+   * 两三个朋友围着一台电脑就能开局，不必各自开电脑走联机。P1 用「你的名号」，其余为 玩家2/3/4。 */
+  function injectHotseatOption() {
+    const aiGroup = $('#opt-ai') && $('#opt-ai').closest('.opt-group');
+    if (!aiGroup || $('#opt-humans')) return;
+    const g = document.createElement('div');
+    g.className = 'opt-group';
+    g.innerHTML = '<b title="同一台电脑轮流操作的真人数量">同屏玩家</b><span id="opt-humans">' +
+      [1, 2, 3, 4].map(n => `<button data-n="${n}" class="${n === 1 ? 'on' : ''}" title="${n === 1 ? '单人 vs AI' : n + ' 位真人同屏轮流'}">${n}</button>`).join('') + '</span>';
+    aiGroup.parentNode.insertBefore(g, aiGroup);
+    $$('#opt-humans button').forEach(b => b.addEventListener('click', () => {
+      humanCount = +b.dataset.n;
+      $$('#opt-humans button').forEach(x => x.classList.toggle('on', x === b));
+      /* 真人 + AI 上限 4 席：真人多了就自动压缩 AI 数 */
+      $$('#opt-ai button').forEach(x => {
+        const n = +x.dataset.n, ok = humanCount + n <= 4 || n === 0;
+        x.disabled = !ok;
+        x.style.opacity = ok ? '' : '.35';
+      });
+      if (humanCount + aiCount > 4) {
+        aiCount = Math.max(0, 4 - humanCount);
+        $$('#opt-ai button').forEach(x => x.classList.toggle('on', +x.dataset.n === aiCount));
+      }
+      SFX.click();
+    }));
   }
 
   function pickChars(cfg) {
@@ -66,26 +96,39 @@ const main = (() => {
       for (let i = four.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [four[i], four[j]] = [four[j], four[i]]; }
       return { chars: four, humanChar: '\u0000none' };
     }
-    return { chars: [selectedChar, ...rest.slice(0, cfg.aiCount)], humanChar: selectedChar };
+    const humans = Math.max(1, Math.min(4, cfg.humans || 1));
+    const ais = Math.max(humans > 1 ? 0 : 1, Math.min(cfg.aiCount, 4 - humans));
+    const chars = [selectedChar, ...rest.slice(0, humans - 1 + ais)];
+    let seats = null;
+    if (humans > 1) {
+      seats = chars.map((_, i) => ({ idx: i, ai: i >= humans, name: i >= humans ? null : (i === 0 ? (cfg.nickname || null) : ('玩家' + (i + 1))) }));
+    }
+    return { chars, humanChar: selectedChar, seats };
   }
 
-  function startMatch(cfg) {
+  async function startMatch(cfg) {
+    if (window.showBoardBoot) window.showBoardBoot();
+    await Promise.race([
+      new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))),
+      new Promise(r => setTimeout(r, 120)),   /* 后台标签 rAF 不触发时兜底 */
+    ]);   /* 让转圈先画出来 */
     const nameEl = document.getElementById('opt-name');
     if (nameEl) {
-      const v = nameEl.value.trim();
+      const v = cleanName(nameEl.value, '');
       if (v) { cfg.nickname = v; try { localStorage.setItem('df_nickname', v); } catch (e) {} }
-      else { try { cfg.nickname = localStorage.getItem('df_nickname') || ''; } catch (e) { cfg.nickname = ''; } }
+      else { try { cfg.nickname = cleanName(localStorage.getItem('df_nickname'), ''); } catch (e) { cfg.nickname = ''; } }
     }
 
     lastConfig = cfg;
-    const { chars, humanChar } = pickChars(cfg);
+    const { chars, humanChar, seats } = pickChars(cfg);
     $('#start-screen').classList.add('hidden');
     $('#game-screen').classList.remove('hidden');
-    G.speed = 1;
-    $('#btn-speed').textContent = '1×';
-    newGame(chars, humanChar, { startMoney: cfg.startMoney, maxRounds: cfg.maxRounds, nickname: cfg.nickname || '' });
+    ui.applySpeed(ui.loadSpeed(), { persist: false });   /* 沿用玩家上次选的速度，不再每局重置回 1× */
+    newGame(chars, humanChar, { startMoney: cfg.startMoney, maxRounds: cfg.maxRounds, nickname: cfg.nickname || '', allMax: cfg.allMax, seats });
     BGM.setMode('game');
+    if (window.hideBoardBoot) window.hideBoardBoot();
     if (cfg.spectate) ui.toast('👀 观战模式：四位 AI 正在对决', '👀');
+    if (seats) ui.toast(`🎮 同屏 ${seats.filter(s => !s.ai).length} 人局：轮到谁，谁来掷骰`, '🎮');
   }
 
   function restart() {
@@ -97,7 +140,14 @@ const main = (() => {
     $('#toasts').innerHTML = '';
     setTimeout(() => {
       G.over = false;
-      if (lastConfig) startMatch(lastConfig);
+      if (!lastConfig) return;
+      /* 联机局「再来一局」：房主用同一房间重新开局并广播给客人；此前会静默切成单机配置（客人全部失联） */
+      if (lastConfig.net) {
+        if (NET.active && NET.isHost && netState.guests.length) launchNetMatch();
+        else backToMenu();
+        return;
+      }
+      startMatch(lastConfig);
     }, 60);
   }
 
@@ -110,6 +160,13 @@ const main = (() => {
     $('#toasts').innerHTML = '';
     $('#game-screen').classList.add('hidden');
     $('#start-screen').classList.remove('hidden');
+    /* 联机残留清理：不销毁 NET 的话，下一局单机里 decide() 仍会把 AI 座位的决策发给还连着的旧客人 */
+    if (NET.active) { try { NET.destroy(); } catch (e) { /* */ } }
+    window.__netGuest = false;
+    window.__seatCheck = null;
+    hideReconnect();
+    chatVisible(false);
+    try { sessionStorage.removeItem('df_mp'); } catch (e) { /* */ }
     BGM.setMode('menu');
   }
 
@@ -118,8 +175,13 @@ const main = (() => {
     const orig = ui.showGameOver;
     ui.showGameOver = async (ranking, humanWon) => {
       const r = await orig(ranking, humanWon);
-      if (r === 'menu') backToMenu();
-      else restart();
+      if (r === 'menu') { backToMenu(); return; }
+      if (window.__netGuest) {
+        /* 客人没有开局权：留在桌边等房主点「再来一局」（房主会重新广播 start） */
+        ui.toast('⏳ 等待房主开始下一局…（也可返回主菜单）', '⏳');
+        return;
+      }
+      restart();
     };
   }
 
@@ -131,8 +193,10 @@ const main = (() => {
     const n = Math.max(2, Math.min(4, +q.get('players') || 4));
     const cfg = {
       aiCount: n - 1,
+      humans: Math.max(1, Math.min(4, +q.get('humans') || 1)),   /* ?humans=2 → 同屏双人（自动化测试） */
       startMoney: +q.get('money') || 9000,
       maxRounds: q.get('rounds') != null ? +q.get('rounds') : 6,
+      allMax: q.get('allmax') === '1',
       spectate: q.get('watch') === '1',
     };
     if (q.get('speed')) G.speed = Math.max(1, Math.min(2.4, +q.get('speed') || 1));
@@ -178,11 +242,12 @@ const main = (() => {
       const p = G.players[m.seat];
       if (p) d.style.setProperty('--pc', playerColor(p));
     }
-    d.innerHTML = `<span class="cb">${sticker ? `<span class="sticker">${m.text}</span>` : m.text}</span><b>${m.from}</b>`;
+    const safeText = escapeHTML(m.text), safeFrom = escapeHTML(m.from);
+    d.innerHTML = `<span class="cb">${sticker ? `<span class="sticker">${safeText}</span>` : safeText}</span><b>${safeFrom}</b>`;
     feed.appendChild(d);
     while (feed.children.length > 60) feed.firstChild.remove();
     feed.scrollTop = feed.scrollHeight;
-    if (sticker) stickerPop(m.text, m.from);
+    if (sticker) stickerPop(safeText, safeFrom);
   }
   function stickerPop(text, from) {
     const host3d = document.getElementById('board-center');
@@ -195,6 +260,14 @@ const main = (() => {
     setTimeout(() => d.remove(), 1600);
   }
   function chatVisible(v) { $('#chat-panel').classList.toggle('hidden', !v); }
+  /* 远端文本消毒：昵称/聊天来自客人浏览器，经 pname()/appendChat 进入 innerHTML —— 不转义即是 P2P 局内 XSS */
+  function escapeHTML(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+  }
+  function cleanName(s, fallback) {
+    const v = String(s == null ? '' : s).replace(/[<>&"'\u0000-\u001f]/g, '').trim().slice(0, 10);
+    return v || fallback;
+  }
 
   function registerHostHandlers() {
     if (netState.hostRegistered) return;
@@ -211,10 +284,13 @@ const main = (() => {
       if (G.players[seat]) ui.toast(`⏳ 等待 ${pname(G.players[seat])} 重连响应…`, '⏳');
     });
     NET.on('rejoin', seat => {
-      if (G.players[seat]) {
-        ui.toast(`✅ ${pname(G.players[seat])} 已重连，对局继续`, '✅');
-        NET.broadcast({ t: 'chat', from: '系统', seat: -1, text: `${pname(G.players[seat])} 重新连接成功` });
-        appendChat({ from: '系统', text: `${pname(G.players[seat])} 重新连接成功` });
+      const p = G.players[seat];
+      if (p) {
+        /* 宽限到期已交 AI 的座位，人回来了就把控制权还回去 */
+        if (p.ai) { p.ai = false; ui.updatePlayers(); }
+        ui.toast(`✅ ${pname(p)} 已重连，对局继续`, '✅');
+        NET.broadcast({ t: 'chat', from: '系统', seat: -1, text: `${pname(p)} 重新连接成功` });
+        appendChat({ from: '系统', text: `${pname(p)} 重新连接成功` });
       }
       NET.sendSync();
     });
@@ -223,7 +299,8 @@ const main = (() => {
       if (seat > 3) { conn.send(JSON.stringify({ t: 'welcome', seat: -1 })); return seat; }
       const taken = new Set([selectedChar, ...netState.guests.map(g => g.charId)]);
       let cid = (m.charId && !taken.has(m.charId)) ? m.charId : CHARACTERS.find(c => !taken.has(c.id)).id;
-      netState.guests.push({ seat, name: m.name || ('玩家' + (seat + 1)), charId: cid });
+      /* 昵称在此消毒一次：之后经 snapshot/pname 进入所有端的 log/toast/面板 innerHTML */
+      netState.guests.push({ seat, name: cleanName(m.name, '玩家' + (seat + 1)), charId: cid });
       renderGuests();
       return { seat, charId: cid };
     });
@@ -231,21 +308,29 @@ const main = (() => {
       const g = netState.guests.find(x => x.seat === seat);
       netState.guests = netState.guests.filter(x => x.seat !== seat);
       renderGuests();
-      if (G.started && G.players[seat] && G.players[seat].alive) {
-        G.players[seat].ai = true;
-        G.players[seat].name = null;
-        ui.toast(`🌐 ${pname(G.players[seat])} 离开，改由 AI 接管`, '🌐');
+      if (G.started && !G.over && G.players[seat] && G.players[seat].alive) {
+        const p = G.players[seat];
+        p.ai = true;
+        ui.toast(`🌐 ${pname(p)} 离开（宽限已过），改由 AI 接管`, '🌐');
         ui.updatePlayers();
+        /* 引擎可能正卡在该座位的掷骰等待上：替它掷一次，回合流才能继续 */
+        if (G.players[G.cur] === p) { if (ui.fireRemoteRoll) ui.fireRemoteRoll(p.idx); else ui.tryFireRoll(); }
       }
     });
     NET.on('chat', appendChat);
     NET.on('roll', m => {
-      if (G.started && !G.over && G.players[G.cur] && G.players[G.cur].idx === m.seat) ui.tryFireRoll();
+      if (G.started && !G.over && G.players[G.cur] && G.players[G.cur].idx === m.seat) {
+        if (ui.fireRemoteRoll) ui.fireRemoteRoll(m.seat); else ui.tryFireRoll();
+      }
     });
     NET.on('prop', m => {
       const seat = m.seat;
       if (!G.started || G.over || !G.players[G.cur] || G.players[G.cur].idx !== seat) return;
       const p = G.players[seat];
+      if (!p || p.ai || !p.alive) return;
+      /* 只在掷骰前阶段受理（房主端掷骰按钮亮着 = 该人类座位的 preroll），杜绝客人掷骰后补用护身符/均富卡 */
+      const rb = document.getElementById('btn-roll');
+      if (!rb || !rb.classList.contains('show')) { NET.toSeat(seat, { t: 'ui', fn: 'toast', args: ['只能在掷骰前使用道具', '🚫'] }); return; }
       const gid = G.gameId;
       if (m.key === 'dice') {
         NET.askSeat(seat, { kind: 'number' }).then(v => {
@@ -253,45 +338,64 @@ const main = (() => {
         });
       } else if (m.key === 'shield' || m.key === 'equal') {
         useProp(gid, p, m.key);
+      } else if (m.key === 'block' || m.key === 'demo') {
+        /* 客人已在本地棋盘点选目标格并上报格号；房主用同一套规则复核后执行（不信任客人端） */
+        const f = ui.propTargetFilter ? ui.propTargetFilter(m.key, p) : null;
+        const arg = m.arg | 0;
+        if (f && arg >= 0 && arg < BOARD.length && f(arg)) useProp(gid, p, m.key, arg);
+        else NET.toSeat(seat, { t: 'ui', fn: 'toast', args: ['目标格已失效，请重新选择', '🚫'] });
       } else {
-        ui.toast('该道具需要当面操作，联机版暂不支持', '🚫');
+        ui.toast('未知道具指令', '🚫');
       }
     });
   }
-  function showReconnect(text) {
+  function showReconnect(text, { final = false } = {}) {
     let ov = document.getElementById('reconnect');
     if (!ov) {
       ov = document.createElement('div');
       ov.id = 'reconnect';
       document.body.appendChild(ov);
     }
-    ov.innerHTML = `<div class="rc-box"><div class="rc-spin"></div><div class="rc-t">⚠️ 连接中断</div><div class="rc-s">${text}</div></div>`;
+    /* 遮罩始终给出「返回主菜单」出口：此前重连彻底失败后只能刷新页面 */
+    ov.innerHTML = `<div class="rc-box">${final ? '' : '<div class="rc-spin"></div>'}<div class="rc-t">${final ? '🔌 连接已断开' : '⚠️ 连接中断'}</div><div class="rc-s">${text}</div>` +
+      `<div style="margin-top:16px"><button class="btn btn-ghost btn-mini" id="rc-menu">🏠 返回主菜单</button></div></div>`;
     ov.classList.add('show');
+    const b = ov.querySelector('#rc-menu');
+    if (b) b.onclick = () => { hideReconnect(); main.backToMenu(); };
   }
   function hideReconnect() {
     const ov = document.getElementById('reconnect');
     if (ov) ov.remove();
   }
+  let reconnecting = false;
   function guestReconnectLoop() {
+    if (reconnecting) return;
     const raw = sessionStorage.getItem('df_mp');
-    if (!raw) { showReconnect('会话丢失，请返回主菜单重新加入'); return; }
+    if (!raw) { showReconnect('会话丢失，请返回主菜单重新加入', { final: true }); return; }
     const ses = JSON.parse(raw);
+    reconnecting = true;
     let attempts = 0;
     const tryOnce = () => {
       attempts++;
       showReconnect(`正在重连 ${ses.code}（第 ${attempts} 次尝试）…`);
       registerGuestHandlers();
       NET.join(ses.code, ses.name, null, welcome => {
+        reconnecting = false;
         if (welcome.seat >= 0) {
           try { sessionStorage.setItem('df_mp', JSON.stringify({ code: ses.code, name: ses.name, seat: welcome.seat, token: welcome.token || ses.token })); } catch (e) { /* */ }
           hideReconnect();
+          /* 对局中的重连：房主随后会下发 start 快照重建棋盘（见 net.js hello 重连分支）；
+           * 房主已在大厅（对局已结束）：按新客人身份留在大厅等下一局 */
+          if (!welcome.rejoin) {
+            showReconnect('房主当前不在对局中，已回到房间大厅等待下一局', { final: true });
+          }
           NET.sendChat('我重新连接上了！');
         } else {
-          showReconnect('房间状态异常，请返回主菜单');
+          showReconnect('房间已满或状态异常，请返回主菜单', { final: true });
         }
       }, () => {
         if (attempts < 8) setTimeout(tryOnce, 2500);
-        else showReconnect('多次重连失败：请检查网络后刷新页面重试');
+        else { reconnecting = false; showReconnect('多次重连失败：请检查网络后重试，或返回主菜单', { final: true }); }
       }, null, st => showReconnect(`正在重连 ${ses.code}（第 ${attempts} 次尝试）…`));
     };
     tryOnce();
@@ -304,50 +408,67 @@ const main = (() => {
     NET.on('hb', () => { window.__mpLastMsg = Date.now(); });
     setInterval(() => {
       if (!NET.active || NET.isHost) return;
-      if (Date.now() - (window.__mpLastMsg || 0) > 15000 && G.started && !G.over) {
+      if (Date.now() - (window.__mpLastMsg || 0) > 15000 && G.started && !G.over && !reconnecting) {
         window.__mpLastMsg = Date.now();
         showReconnect('网络不稳定，正在尝试恢复连接…');
       }
     }, 3000);
+    /* 与房主断开：走重连循环（原版此处被第二个同名注册覆盖成「直接回菜单」，重连逻辑从未运行） */
     NET.on('kicked', () => {
-      ui.toast('与房主的连接已断开', '🔌');
-      window.__netGuest = false;
-      hideReconnect();
+      if (!G.started || G.over) { hideReconnect(); main.backToMenu(); return; }
+      ui.toast('与房主的连接已断开，尝试重连…', '🔌');
       guestReconnectLoop();
     });
-    NET.on('kicked', () => {
-      ui.toast('与房主的连接已断开', '🔌');
-      window.__netGuest = false;
-      main.backToMenu();
+    /* 房主广播的终局名次：客人也能看到结算画面（原版客人永远看不到，对局在他们那里无声消失） */
+    NET.on('over', m => {
+      if (!m || !Array.isArray(m.order)) return;
+      const ranking = m.order.map(i => G.players[i]).filter(Boolean);
+      if (!ranking.length) return;
+      G.over = true;
+      const myWin = ranking[0].idx === NET.mySeat;
+      if (myWin) SFX.win(); else SFX.lose();
+      ui.showGameOver(ranking, myWin);   /* 经 hookGameOver 包裹：再来一局/回菜单 → 客人统一回到大厅 */
     });
   }
+  let guestInputWired = false;
   function guestStart(m) {
     try {
       const ses = JSON.parse(sessionStorage.getItem('df_mp') || 'null');
       if (ses && ses.name) window.__myName = ses.name;
     } catch (e) { /* */ }
     const snap = m.snap;
+    G.gameId++;                          /* 作废客人本地可能残留的异步 UI 流程 */
     G.maxRounds = m.cfg.maxRounds;
     G.players = snap.players.map(sp => Object.assign({ idx: sp.idx }, sp));
     G.tiles = snap.tiles.map(t => ({ owner: t.owner, level: t.level }));
     G.cur = snap.cur; G.round = snap.round; G.pot = snap.pot;
     G.luckyTile = snap.luckyTile; G.blocks = snap.blocks || {}; G.season = snap.season;
-    G.started = true; G.over = false; G.speed = 1;
-    $('#btn-speed').textContent = '1×';
+    G.started = true; G.over = false;
+    ui.abortTransient();
+    ui.applySpeed(ui.loadSpeed(), { persist: false });
+    window.__netGuest = true;
+    hideReconnect();
+    $('#net-lobby').classList.add('hidden');
     $('#start-screen').classList.add('hidden');
     $('#game-screen').classList.remove('hidden');
     chatVisible(true);
     ui.initGameScene();
+    if (window.showBoardBoot) window.showBoardBoot();
     SFX.unlock(); BGM.setMode('game');
-    ui.toast('🌐 联机对局开始！轮到谁由房主同步', '🌐');
-    // 客人的掷骰与道具全部转为操作发往房主
-    $('#btn-roll').addEventListener('click', () => { NET.toHost({ t: 'roll' }); });
-    document.addEventListener('keydown', (e) => {
-      if (e.code === 'Space' && !e.repeat) {
-        e.preventDefault(); e.stopImmediatePropagation();
-        NET.toHost({ t: 'roll' });
-      }
-    }, true);
+    if (window.hideBoardBoot) setTimeout(() => window.hideBoardBoot(), 400);
+    ui.toast(m.rejoin ? '✅ 已重连，对局恢复' : '🌐 联机对局开始！轮到谁由房主同步', '🌐');
+    /* 客人的掷骰与道具全部转为操作发往房主（监听只挂一次：重连/再来一局会重复进入本函数） */
+    if (!guestInputWired) {
+      guestInputWired = true;
+      $('#btn-roll').addEventListener('click', () => { if (window.__netGuest) NET.toHost({ t: 'roll' }); });
+      document.addEventListener('keydown', (e) => {
+        if (!window.__netGuest) return;
+        if (e.code === 'Space' && !e.repeat) {
+          e.preventDefault(); e.stopImmediatePropagation();
+          NET.toHost({ t: 'roll' });
+        }
+      }, true);
+    }
     wireChatInput();
   }
   function launchNetMatch() {
@@ -373,7 +494,7 @@ const main = (() => {
     $('#start-screen').classList.add('hidden');
     $('#game-screen').classList.remove('hidden');
     chatVisible(true);
-    G.speed = 1; $('#btn-speed').textContent = '1×';
+    ui.applySpeed(ui.loadSpeed(), { persist: false });
     newGame(chars, selectedChar, {
       startMoney: lastConfig.startMoney,
       maxRounds: lastConfig.maxRounds,
@@ -385,6 +506,7 @@ const main = (() => {
     NET.broadcast({ t: 'chat', from: '系统', seat: -1, text: '对局开始！祝各位发财！' });
     window.__seatCheck = p => !NET.isRemoteSeat(p.idx);
     BGM.setMode('game');
+    if (window.hideBoardBoot) window.hideBoardBoot();
     appendChat({ from: '系统', text: '对局开始！祝各位发财！' });
     wireChatInput();
   }
@@ -458,11 +580,11 @@ const main = (() => {
           welcome.chatLog.forEach(cm => appendChat(cm));
         }
         if (welcome.rejoin) {
+          /* 对局中重连：房主紧随 welcome 下发 start 快照 → guestStart 重建棋盘并隐藏大厅 */
           $('#net-waiting').innerHTML = '✅ 重连成功，正在恢复对局…';
-          $('#net-lobby').classList.add('hidden');
-          if (!(G.started && G.players.length)) {
-            setTimeout(() => { $('#net-lobby').classList.remove('hidden'); $('#net-waiting').innerHTML = '⚠️ 房主对局状态异常，请让房主重新分享或重建房间'; }, 800);
-          }
+          setTimeout(() => {
+            if (!(G.started && G.players.length)) $('#net-waiting').innerHTML = '⚠️ 未收到房主的对局快照，请让房主重新分享或重建房间';
+          }, 5000);
           return;
         }
         const c2 = c;
@@ -482,6 +604,7 @@ const main = (() => {
       ui.bindChrome();
       hookGameOver();
       SFX.loadSamples();
+      BGM.setMode('menu');   // 主界面音乐（首次手势后自动起播）
       window.__initStage = 'before-auto';
       netLobbyInit();
       try {
