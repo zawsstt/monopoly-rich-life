@@ -24,7 +24,7 @@ const BGM = (() => {
   }
 
   function play() {
-    if (!on || !mode || !unlocked) return;
+    if (!on || !mode) return;
     stop();
     const list = mode === 'menu' ? MENU : GAME;
     audio = new Audio();
