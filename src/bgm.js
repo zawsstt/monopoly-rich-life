@@ -13,7 +13,6 @@ const BGM = (() => {
   let mode = null;          // 'menu' | 'game' | null
   let idx = 0;
   let on = (function () { try { return localStorage.getItem('df_bgm') !== '0'; } catch (e) { return true; } })();
-  let unlocked = false;
 
   function stop() {
     if (audio) {
@@ -39,12 +38,17 @@ const BGM = (() => {
     if (p && p.catch) p.catch(() => { /* 自动播放被拦截：等手势 */ });
   }
 
-  /* 首次任意点击解锁（浏览器要求用户手势后才能出声） */
-  document.addEventListener('pointerdown', function unlock() {
-    unlocked = true;
-    document.removeEventListener('pointerdown', unlock, true);
-    if (mode && on) play();
-  }, true);
+  /* 自动播放策略兜底：初始化即尝试播放；被拦截时在首个手势/页面可见时重试（不显示任何提示文字） */
+  function tryResume() {
+    if (!on || !mode) return;
+    if (audio && audio.paused) { const p = audio.play(); if (p && p.catch) p.catch(() => {}); }
+    else play();
+  }
+  function onGesture() { tryResume(); }
+  document.addEventListener('pointerdown', onGesture, true);
+  document.addEventListener('keydown', onGesture, true);
+  document.addEventListener('touchstart', onGesture, { passive: true, capture: true });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) tryResume(); });
 
   return {
     setMode(m) {
