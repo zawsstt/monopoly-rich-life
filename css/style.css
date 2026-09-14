@@ -494,6 +494,9 @@ select {
 #btn-roll small { display: block; font-size: 11px; letter-spacing: 2px; font-weight: 600; opacity: .65; }
 #btn-roll.show { display: block; }
 #btn-roll:disabled { animation: none; filter: grayscale(.4) brightness(.8); cursor: wait; }
+/* 联机：等待远程座位掷骰（房主看客人 / 客人看别人）—— 只作提示，不可点 */
+#btn-roll.waiting-remote { font-size: 15px; letter-spacing: 2px; padding: 12px 30px; cursor: default; opacity: .78; }
+#btn-roll.waiting-remote small { display: none; }
 @keyframes rollPulse { 50% { transform: scale(1.05); box-shadow: 0 6px 30px rgba(240, 168, 24, .65), inset 0 2px 0 rgba(255,255,255,.65); } }
 
 .bc-bottom { display: flex; align-items: center; gap: clamp(14px, 3vmin, 34px); }
