@@ -905,11 +905,11 @@ const V3D = (() => {
       ptex.wrapS = ptex.wrapT = THREE.ClampToEdgeWrapping;
       const poster = new THREE.Mesh(
         new THREE.PlaneGeometry(PW, PH),
-        new THREE.MeshBasicMaterial({ map: ptex, transparent: true, opacity: 0.6, depthWrite: false }));
+        new THREE.MeshBasicMaterial({ map: ptex, transparent: false, opacity: 1.0 }));
       poster.rotation.x = -Math.PI / 2;
-      poster.position.set(0, TILE_TOP + 0.05, 0);        poster.renderOrder = 1;        poster.material.polygonOffset = true; poster.material.polygonOffsetFactor = -4; poster.material.polygonOffsetUnits = -4;
+      poster.position.set(0, TILE_TOP + 0.06, 0);        poster.renderOrder = 1;        poster.material.polygonOffset = true; poster.material.polygonOffsetFactor = -4; poster.material.polygonOffsetUnits = -4;
       staticRoot.add(poster);
-      logo.position.set(0, TILE_TOP + 0.04, 8.55);   /* 游戏名挪到海报下方空白带 */
+      logo.position.set(0, TILE_TOP + 0.09, 8.4);   /* 海报下方空白带正上方，高于海报面 */   /* 游戏名挪到海报下方空白带 */
       logo.scale.set(0.72, 0.72, 1);
     } catch (e) { window.__errs && window.__errs.push('poster: ' + e.message); }
 
@@ -1209,6 +1209,100 @@ const V3D = (() => {
       flags[i].pivot.children[0].material = matStd(color, { rough: 0.6, emissive: color, ei: 0.18 });
     }
   }
+  /* ---------- 静态合批（性能预算：22×lv4 精修建筑 ≈ 7,700 mesh → 每帧 1 万 draw call） ----------
+   * 精修地产每级 ≤350 个小 mesh，但同一文件内材质经 _matCache 共享（每栋约 40 种材质）。
+   * 引擎不驱动 dynRoot 的 userData.anim（主循环只 runAnims(staticRoot/fxRoot)），因此地产建筑
+   * 在游戏内本就是纯静态：把「同材质 + 同属性签名 + 同阴影/渲染序」的 Mesh 烘焙进一个 Mesh，
+   * draw call 与阴影 pass 同比例下降，三角形数与包围盒严格不变（smoke_perf_budget.js 断言）。
+   * 保守规则：跳过 Instanced/Skinned/多材质/morph/透明/不可见 mesh；负行列式（镜像）翻转绕序；
+   * 只在 dynRoot 地产建筑上使用（特建/角色带运行中动画，不合批）。?nomerge=1 可退回原始层级。 */
+  const MERGE_STATIC = !(typeof location !== 'undefined' &&
+    new URLSearchParams(location.search).get('nomerge') === '1');
+  const _mInv = new THREE.Matrix4(), _mRel = new THREE.Matrix4(), _nrm = new THREE.Matrix3();
+  const _v3 = new THREE.Vector3();
+  function ancestorsVisible(o, root) {
+    for (let p = o; p && p !== root; p = p.parent) { if (p.visible === false) return false; }
+    return true;
+  }
+  function attrSig(g) {
+    return Object.keys(g.attributes).sort().map(k => k + ':' + g.attributes[k].itemSize).join(',');
+  }
+  function mergeStaticGroup(root) {
+    if (!root || !root.isObject3D) return root;
+    root.updateMatrixWorld(true);
+    _mInv.copy(root.matrixWorld).invert();
+    const buckets = new Map();
+    root.traverse(o => {
+      if (o === root || !o.isMesh || o.isInstancedMesh || o.isSkinnedMesh) return;
+      const g = o.geometry, m = o.material;
+      if (!g || !g.isBufferGeometry || !g.attributes.position || Array.isArray(m) || !m) return;
+      if (g.morphAttributes && Object.keys(g.morphAttributes).length) return;
+      if (m.transparent || o.visible === false || !ancestorsVisible(o, root)) return;
+      const key = m.uuid + '|' + attrSig(g) + '|' + (o.castShadow ? 1 : 0) + (o.receiveShadow ? 1 : 0) + '|' + o.renderOrder;
+      let b = buckets.get(key);
+      if (!b) { b = { mat: m, sig: attrSig(g), cast: o.castShadow, recv: o.receiveShadow, ro: o.renderOrder, items: [] }; buckets.set(key, b); }
+      b.items.push(o);
+    });
+    let merged = 0, removed = 0;
+    buckets.forEach(b => {
+      if (b.items.length < 2) return;
+      /* 统计非索引化后的顶点总数 */
+      const srcs = b.items.map(o => {
+        const g = o.geometry;
+        const ng = g.index ? g.toNonIndexed() : g;
+        return { o, g: ng, own: ng !== g, n: ng.attributes.position.count };
+      });
+      const total = srcs.reduce((s, x) => s + x.n, 0);
+      const names = Object.keys(srcs[0].g.attributes);
+      const out = new THREE.BufferGeometry();
+      const arrays = {};
+      names.forEach(k => { arrays[k] = new Float32Array(total * srcs[0].g.attributes[k].itemSize); });
+      let off = 0;
+      for (const s of srcs) {
+        _mRel.multiplyMatrices(_mInv, s.o.matrixWorld);
+        _nrm.getNormalMatrix(_mRel);
+        const flip = _mRel.determinant() < 0;
+        for (const k of names) {
+          const a = s.g.attributes[k], isz = a.itemSize, dst = arrays[k];
+          const base = off * isz;
+          if (k === 'position') {
+            for (let v = 0; v < s.n; v++) {
+              _v3.fromBufferAttribute(a, v).applyMatrix4(_mRel);
+              dst[base + v * 3] = _v3.x; dst[base + v * 3 + 1] = _v3.y; dst[base + v * 3 + 2] = _v3.z;
+            }
+          } else if (k === 'normal') {
+            for (let v = 0; v < s.n; v++) {
+              _v3.fromBufferAttribute(a, v).applyMatrix3(_nrm).normalize();
+              dst[base + v * 3] = _v3.x; dst[base + v * 3 + 1] = _v3.y; dst[base + v * 3 + 2] = _v3.z;
+            }
+          } else if (a.array instanceof Float32Array && !a.normalized) {
+            dst.set(a.array.subarray(0, s.n * isz), base);
+          } else {
+            for (let v = 0; v < s.n; v++) for (let c = 0; c < isz; c++) dst[base + v * isz + c] = a.getComponent(v, c);
+          }
+          if (flip) {
+            /* 镜像变换：交换每个三角形第 2/3 顶点，保持正面朝外 */
+            for (let tri = 0; tri + 2 < s.n; tri += 3) {
+              const i1 = base + (tri + 1) * isz, i2 = base + (tri + 2) * isz;
+              for (let c = 0; c < isz; c++) { const tmp = dst[i1 + c]; dst[i1 + c] = dst[i2 + c]; dst[i2 + c] = tmp; }
+            }
+          }
+        }
+        off += s.n;
+        if (s.own) s.g.dispose();
+      }
+      names.forEach(k => out.setAttribute(k, new THREE.BufferAttribute(arrays[k], srcs[0].g.attributes[k].itemSize)));
+      const mesh = new THREE.Mesh(out, b.mat);
+      mesh.castShadow = b.cast; mesh.receiveShadow = b.recv; mesh.renderOrder = b.ro;
+      mesh.name = 'merged';
+      root.add(mesh);
+      b.items.forEach(o => { if (o.parent) o.parent.remove(o); removed++; });
+      merged++;
+    });
+    root.userData.merged = { buckets: merged, removed };
+    return root;
+  }
+
   function syncBuilding(i, st, t) {
     const wantLevel = (t.type === 'prop' && st.owner != null && st.level > 0) ? Math.min(4, st.level) : 0;
     const curB = buildings[i];
@@ -1225,6 +1319,7 @@ const V3D = (() => {
       }
       if (!g && B && typeof B.property === 'function') g = B.property(i, wantLevel);
       if (!g) { shadowDirty(); return; }
+      if (MERGE_STATIC) { try { mergeStaticGroup(g); } catch (e) { window.__errs && window.__errs.push('v3d merge ' + i + ': ' + e.message); } }
       const { x, z } = worldOf(i);
       g.position.set(x, TILE_TOP, z);
       g.rotation.y = sideRotY(i) + (SPECIAL_YAW[i] || 0);
@@ -1825,6 +1920,12 @@ const V3D = (() => {
     flashList.push({ mat: top.mat, t: 0, dur, color: new THREE.Color(color), peak: peak || 0.6 });
   }
   function flashTile(i) { addFlash(i, 0xfff6d8, 0.7, 0.55); }
+  /* 选格模式高亮（路障/拆迁令）：2D 格子在 v3d 下不可见，此前玩家看不到哪些格子可选 */
+  let pickSet = null;
+  function setPickable(list) {
+    if (pickSet) pickSet.forEach(i => { const t = tileTops[i]; if (t && !flashList.some(f => f.mat === t.mat)) { t.mat.emissive.setScalar(0); t.mat.emissiveIntensity = 1; } });
+    pickSet = (Array.isArray(list) && list.length) ? new Set(list) : null;
+  }
   function tileFx(i, kind) {
     if (!ready) return;
     if (kind === 'firework') { fireworkAtTile(i); return; }
@@ -2208,12 +2309,22 @@ const V3D = (() => {
       }
       if (prevHoverIdx !== hoverIdx) {
         const pm = (prevHoverIdx >= 0 && tileTops[prevHoverIdx]) ? tileTops[prevHoverIdx].mat : null;
-        if (pm && !flashList.some(f => f.mat === pm)) { pm.emissive.setScalar(0); pm.emissiveIntensity = 1; }
+        if (pm && !flashList.some(f => f.mat === pm) && !(pickSet && pickSet.has(prevHoverIdx))) { pm.emissive.setScalar(0); pm.emissiveIntensity = 1; }
         prevHoverIdx = hoverIdx;
       }
       if (hoverIdx >= 0 && tileTops[hoverIdx] && !flashList.some(f => f.mat === tileTops[hoverIdx].mat)) {
         tileTops[hoverIdx].mat.emissive.setHex(0xfff2cc);
         tileTops[hoverIdx].mat.emissiveIntensity = 0.14;
+      }
+      /* 选格高亮：可选格金色脉冲（悬停格更亮） */
+      if (pickSet) {
+        const pulse = 0.22 + Math.sin(worldT * 5) * 0.1;
+        pickSet.forEach(i => {
+          const t = tileTops[i];
+          if (!t || flashList.some(f => f.mat === t.mat)) return;
+          t.mat.emissive.setHex(0xffd23c);
+          t.mat.emissiveIntensity = i === hoverIdx ? 0.5 : pulse;
+        });
       }
 
       /* 奖池金币呼吸 */
@@ -2299,6 +2410,7 @@ const V3D = (() => {
     rides.clear();
     followIdx = -1;
     flashList.length = 0;
+    try { setPickable(null); } catch (e) { /* ignore */ }
     if (fxRoot) {
       while (fxRoot.children.length) fxRoot.remove(fxRoot.children[0]);
     }
@@ -2369,6 +2481,9 @@ const V3D = (() => {
     focusOn, focusTile, focusDefault, flyoverIntro,
     tokenScreenPos, tileScreenPos, centerOverlayRect,
     refreshPot, abortTransient, worldOf,
+    /* 静态合批（性能）：供 smoke_perf_budget.js 做三角形数/包围盒守恒断言 */
+    mergeStaticGroup, setPickable,
+    get mergeEnabled() { return MERGE_STATIC; },
     /* 模块E 只读测试钩子：马路环参数 / 环线行走点 / 环线折线 / 环组 */
     roadPointOf, ringPath,
     roadRingGroup: () => roadRing,
@@ -2435,6 +2550,8 @@ const V3D = (() => {
     wrapSync('updateHUD', () => V3D.refreshPot());
     wrapSync('showGameOver', () => { V3D.setPhase('over', null); V3D.focusDefault(1.6); });
     wrapSync('abortTransient', () => V3D.abortTransient());
+    /* 选格模式（路障/拆迁令）→ 3D 可选格高亮 */
+    try { ui.onPick = list => V3D.setPickable(list); } catch (e) { errs().push('v3d.onPick: ' + e.message); }
     try { console.info('[view3d] 3D 渲染层已接管（Three.js r147 + Building3D 工厂）'); } catch (e) { /* ignore */ }
   }
   if (typeof V3D !== 'undefined') bridge();
