@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>大富翁 · 富贵人生</title>
-<link rel="icon" href="assets/img/ico_coin.png?v=44">
-<link rel="stylesheet" href="css/style.css?v=44">
+<link rel="icon" href="assets/img/ico_coin.png?v=46">
+<link rel="stylesheet" href="css/style.css?v=46">
 <script>
 /* 最早的错误收集器：在任何游戏脚本之前挂载 */
 window.__errs = [];
@@ -19,6 +19,66 @@ window.addEventListener('unhandledrejection', function (e) {
 </script>
 </head>
 <body>
+<link rel="preload" as="image" href="assets/img/scene_poster.png">
+<div id="boot">
+  <div class="boot-logo">大富翁</div>
+  <div class="boot-sub">富贵人生 · WEB 版</div>
+  <div class="boot-bar"><i id="boot-fill"></i></div>
+  <div class="boot-tip" id="boot-tip">正在加载资源…</div>
+</div>
+<div id="board-boot"><div class="bb-spin"></div><div class="bb-txt">正在搭建书房沙盘…</div></div>
+<style>
+#boot{position:fixed;inset:0;z-index:2000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
+  background:radial-gradient(120% 100% at 50% 0%,#123a28 0%,#08150e 70%);transition:opacity .5s ease}
+#boot.off{opacity:0;pointer-events:none}
+#boot .boot-logo{color:#ffd76a;font:900 54px/1 "Microsoft YaHei",sans-serif;letter-spacing:10px;text-shadow:0 4px 24px rgba(240,168,24,.35)}
+#boot .boot-sub{color:#9db8a4;font:600 14px "Microsoft YaHei",sans-serif;letter-spacing:6px}
+#boot .boot-bar{width:min(360px,70vw);height:8px;border-radius:99px;background:rgba(255,255,255,.12);overflow:hidden}
+#boot .boot-bar i{display:block;height:100%;width:4%;border-radius:99px;background:linear-gradient(90deg,#ffd76a,#f0a429);
+  transition:width .25s ease;box-shadow:0 0 14px rgba(240,168,24,.5)}
+#boot .boot-tip{color:#8aa891;font-size:12.5px;letter-spacing:2px}
+#board-boot{position:fixed;inset:0;z-index:1500;display:none;align-items:center;justify-content:center;flex-direction:column;gap:16px;
+  background:rgba(4,16,10,.72);backdrop-filter:blur(2px)}
+#board-boot .bb-spin{width:52px;height:52px;border-radius:50%;border:4px solid rgba(255,215,106,.25);border-top-color:#ffd76a;
+  animation:bbrot 0.9s linear infinite;transform:translateZ(0)}
+@keyframes bbrot{to{transform:rotate(360deg)}}
+#board-boot .bb-txt{color:#ffe9a8;font:700 15px "Microsoft YaHei",sans-serif;letter-spacing:3px}
+#bgm-hint{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:900;display:none;align-items:center;gap:8px;
+  background:rgba(8,24,16,.88);border:1px solid rgba(240,180,41,.45);border-radius:999px;padding:9px 18px;
+  color:#ffe9a8;font:700 13px "Microsoft YaHei",sans-serif;letter-spacing:1px;box-shadow:0 6px 20px rgba(0,0,0,.4);
+  animation:bmghint 1.6s ease-in-out infinite}
+@keyframes bmghint{0%,100%{opacity:.72}50%{opacity:1}}
+</style>
+<script>
+(function () {
+  var total = 0, done = 0, bumpedApi;
+  function paint() {
+    var f = document.getElementById('boot-fill');
+    if (f) f.style.width = Math.min(96, Math.round(done / Math.max(1, total) * 96)) + '%';
+  }
+  window.__bootAdd = function (k) { total += k; paint(); };
+  window.__bootBump = function () { done++; paint(); };
+  window.__bootDone = function () {
+    var f = document.getElementById('boot-fill'); if (f) f.style.width = '100%';
+    var t = document.getElementById('boot-tip'); if (t) t.textContent = '加载完成！';
+    setTimeout(function () { var b = document.getElementById('boot'); if (b) { b.classList.add('off'); setTimeout(function () { b.remove(); }, 550); } }, 350);
+  };
+  document.addEventListener('load', function (e) {
+    var t = e.target;
+    if (t && (t.tagName === 'SCRIPT' || t.tagName === 'IMG')) window.__bootBump();
+  }, true);
+  document.addEventListener('error', function (e) {
+    var t = e.target;
+    if (t && (t.tagName === 'SCRIPT' || t.tagName === 'IMG')) window.__bootBump();
+  }, true);
+  document.addEventListener('DOMContentLoaded', function () {
+    try { document.querySelectorAll('img[src]').forEach(function (im) { window.__bootAdd(1); if (im.complete) window.__bootBump(); else { im.addEventListener('load', window.__bootBump); im.addEventListener('error', window.__bootBump); } }); } catch (e) {}
+    setTimeout(function () { window.__bootDone(); }, 450);
+  });
+})();
+window.showBoardBoot = function () { var b = document.getElementById("board-boot"); if (b) b.style.display = "flex"; };
+window.hideBoardBoot = function () { var b = document.getElementById("board-boot"); if (b) b.style.display = "none"; };
+</script>
 
 <!-- 全局层 -->
 <canvas id="confetti"></canvas>
@@ -174,53 +234,53 @@ window.addEventListener('unhandledrejection', function (e) {
   </div>
 </div>
 
-<script src="js/lib/three.min.js?v=44"></script>
-<script src="js/lib/peerjs.min.js?v=44"></script>
-<script src="src/data.js?v=44"></script>
-<script src="src/sfx.js?v=44"></script>
-<script src="src/bgm.js?v=44"></script>
-<script src="src/ai.js?v=44"></script>
-<script src="src/game.js?v=44"></script>
-<script src="src/uix.js?v=44"></script>
-<script src="src/net.js?v=44"></script>
-<script src="src/view3d.js?v=44"></script>
-<script src="src/buildings3d.js?v=44"></script>
-<script src="assets/models/props3d/prop_6.js?v=44"></script>
-<script src="assets/models/props3d/prop_3.js?v=44"></script>
-<script src="assets/models/props3d/prop_1.js?v=44"></script>
-<script src="assets/models/props3d/prop_8.js?v=44"></script>
-<script src="assets/models/props3d/prop_9.js?v=44"></script>
-<script src="assets/models/props3d/prop_13.js?v=44"></script>
-<script src="assets/models/props3d/prop_14.js?v=44"></script>
-<script src="assets/models/props3d/prop_10.js?v=44"></script>
-<script src="assets/models/props3d/prop_18.js?v=44"></script>
-<script src="assets/models/props3d/prop_16.js?v=44"></script>
-<script src="assets/models/props3d/prop_23.js?v=44"></script>
-<script src="assets/models/props3d/prop_19.js?v=44"></script>
-<script src="assets/models/props3d/prop_26.js?v=44"></script>
-<script src="assets/models/props3d/prop_24.js?v=44"></script>
-<script src="assets/models/props3d/prop_28.js?v=44"></script>
-<script src="assets/models/props3d/prop_21.js?v=44"></script>
-<script src="assets/models/props3d/prop_33.js?v=44"></script>
-<script src="assets/models/props3d/prop_30.js?v=44"></script>
-<script src="assets/models/props3d/prop_36.js?v=44"></script>
-<script src="assets/models/props3d/prop_34.js?v=44"></script>
-<script src="assets/models/props3d/prop_39.js?v=44"></script>
-<script src="assets/models/props3d/prop_38.js?v=44"></script>
-<script src="assets/models/specials3d/tile12_jail.js?v=44"></script>
-<script src="assets/models/specials3d/police_car.js?v=44"></script>
-<script src="assets/models/specials3d/tile15_station.js?v=44"></script>
-<script src="assets/models/specials3d/jet.js?v=44"></script>
-<script src="assets/models/specials3d/roadblock.js?v=44"></script>
-<script src="assets/models/specials3d/environment.js?v=44"></script>
-<script src="assets/models/chars3d/boss.js?v=44"></script>
-<script src="assets/models/chars3d/qian.js?v=44"></script>
-<script src="assets/models/chars3d/tang.js?v=44"></script>
-<script src="assets/models/chars3d/tu.js?v=44"></script>
-<script src="assets/models/chars3d/ren.js?v=44"></script>
-<script src="assets/models/chars3d/doudou.js?v=44"></script>
-<script src="assets/models/propFactories.js?v=44"></script>
-<script src="src/main.js?v=44"></script>
+<script src="js/lib/three.min.js?v=46"></script>
+<script src="js/lib/peerjs.min.js?v=46"></script>
+<script src="src/data.js?v=46"></script>
+<script src="src/sfx.js?v=46"></script>
+<script src="src/bgm.js?v=46"></script>
+<script src="src/ai.js?v=46"></script>
+<script src="src/game.js?v=46"></script>
+<script src="src/uix.js?v=46"></script>
+<script src="src/net.js?v=46"></script>
+<script src="src/view3d.js?v=46"></script>
+<script src="src/buildings3d.js?v=46"></script>
+<script src="assets/models/props3d/prop_6.js?v=46"></script>
+<script src="assets/models/props3d/prop_3.js?v=46"></script>
+<script src="assets/models/props3d/prop_1.js?v=46"></script>
+<script src="assets/models/props3d/prop_8.js?v=46"></script>
+<script src="assets/models/props3d/prop_9.js?v=46"></script>
+<script src="assets/models/props3d/prop_13.js?v=46"></script>
+<script src="assets/models/props3d/prop_14.js?v=46"></script>
+<script src="assets/models/props3d/prop_10.js?v=46"></script>
+<script src="assets/models/props3d/prop_18.js?v=46"></script>
+<script src="assets/models/props3d/prop_16.js?v=46"></script>
+<script src="assets/models/props3d/prop_23.js?v=46"></script>
+<script src="assets/models/props3d/prop_19.js?v=46"></script>
+<script src="assets/models/props3d/prop_26.js?v=46"></script>
+<script src="assets/models/props3d/prop_24.js?v=46"></script>
+<script src="assets/models/props3d/prop_28.js?v=46"></script>
+<script src="assets/models/props3d/prop_21.js?v=46"></script>
+<script src="assets/models/props3d/prop_33.js?v=46"></script>
+<script src="assets/models/props3d/prop_30.js?v=46"></script>
+<script src="assets/models/props3d/prop_36.js?v=46"></script>
+<script src="assets/models/props3d/prop_34.js?v=46"></script>
+<script src="assets/models/props3d/prop_39.js?v=46"></script>
+<script src="assets/models/props3d/prop_38.js?v=46"></script>
+<script src="assets/models/specials3d/tile12_jail.js?v=46"></script>
+<script src="assets/models/specials3d/police_car.js?v=46"></script>
+<script src="assets/models/specials3d/tile15_station.js?v=46"></script>
+<script src="assets/models/specials3d/jet.js?v=46"></script>
+<script src="assets/models/specials3d/roadblock.js?v=46"></script>
+<script src="assets/models/specials3d/environment.js?v=46"></script>
+<script src="assets/models/chars3d/boss.js?v=46"></script>
+<script src="assets/models/chars3d/qian.js?v=46"></script>
+<script src="assets/models/chars3d/tang.js?v=46"></script>
+<script src="assets/models/chars3d/tu.js?v=46"></script>
+<script src="assets/models/chars3d/ren.js?v=46"></script>
+<script src="assets/models/chars3d/doudou.js?v=46"></script>
+<script src="assets/models/propFactories.js?v=46"></script>
+<script src="src/main.js?v=46"></script>
 <script>
 /* [assets] 运行时自检（模块 C）：素材全局对象计数 + 3D 视图状态，用户端自诊依据 */
 (function () {
