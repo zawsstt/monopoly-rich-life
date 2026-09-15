@@ -20,11 +20,17 @@ const main = (() => {
       el.className = 'char-card';
       el.style.setProperty('--pc', c.color);
       el.dataset.id = c.id;
+      el.dataset.desc = c.desc;
+      el.style.setProperty('--i', i);
       el.innerHTML = `
-        <div class="cc-full"><img src="${c.tokenImg}" alt="${c.name}"></div>
-        <div class="cc-name">${c.name}</div>
-        <div class="cc-title">${c.title}</div>
-        <div class="cc-desc">${c.desc}</div>`;
+        <span class="cc-glow" aria-hidden="true"></span>
+        <div class="cc-full"><img src="${c.tokenImg}" alt="${c.name}" draggable="false"></div>
+        <div class="cc-plate">
+          <div class="cc-name">${c.name}</div>
+          <div class="cc-title"><i></i>${c.title}<i></i></div>
+          <div class="cc-desc">${c.desc}</div>
+        </div>
+        <span class="cc-seal" aria-hidden="true">选</span>`;
       el.addEventListener('click', () => {
         SFX.click();
         selectedChar = c.id;
@@ -58,16 +64,19 @@ const main = (() => {
     });
   }
 
-  /* 同屏多人（不改 index.html：运行时注入到「对手数量」旁）
+  /* 同屏多人：index.html 已内置带标签的分段控件 #opt-humans（单人 / 2 人 / 3 人 / 4 人）；
+   * 若页面缺失该控件（旧版页面）则运行时注入到「AI 对手」旁作兜底。
    * 两三个朋友围着一台电脑就能开局，不必各自开电脑走联机。P1 用「你的名号」，其余为 玩家2/3/4。 */
   function injectHotseatOption() {
-    const aiGroup = $('#opt-ai') && $('#opt-ai').closest('.opt-group');
-    if (!aiGroup || $('#opt-humans')) return;
-    const g = document.createElement('div');
-    g.className = 'opt-group';
-    g.innerHTML = '<b title="同一台电脑轮流操作的真人数量">同屏玩家</b><span id="opt-humans">' +
-      [1, 2, 3, 4].map(n => `<button data-n="${n}" class="${n === 1 ? 'on' : ''}" title="${n === 1 ? '单人 vs AI' : n + ' 位真人同屏轮流'}">${n}</button>`).join('') + '</span>';
-    aiGroup.parentNode.insertBefore(g, aiGroup);
+    if (!$('#opt-humans')) {
+      const aiGroup = $('#opt-ai') && $('#opt-ai').closest('.opt-group');
+      if (!aiGroup) return;
+      const g = document.createElement('div');
+      g.className = 'opt-group opt-seg';
+      g.innerHTML = '<b title="同一台电脑轮流操作的真人数量">同屏玩家</b><span id="opt-humans" class="seg">' +
+        [1, 2, 3, 4].map(n => `<button data-n="${n}" class="${n === 1 ? 'on' : ''}" title="${n === 1 ? '单人 vs AI' : n + ' 位真人同屏轮流'}"><em>${n === 1 ? '单人' : n + ' 人'}</em></button>`).join('') + '</span>';
+      aiGroup.parentNode.insertBefore(g, aiGroup);
+    }
     $$('#opt-humans button').forEach(b => b.addEventListener('click', () => {
       humanCount = +b.dataset.n;
       $$('#opt-humans button').forEach(x => x.classList.toggle('on', x === b));
@@ -75,7 +84,7 @@ const main = (() => {
       $$('#opt-ai button').forEach(x => {
         const n = +x.dataset.n, ok = humanCount + n <= 4 || n === 0;
         x.disabled = !ok;
-        x.style.opacity = ok ? '' : '.35';
+        x.classList.toggle('off', !ok);
       });
       if (humanCount + aiCount > 4) {
         aiCount = Math.max(0, 4 - humanCount);
@@ -152,6 +161,15 @@ const main = (() => {
   }
 
   function backToMenu() {
+    /* 房主中途离场：先把当前名次广播给客人（他们立刻看到结算画面 + 「房主已离开」），再销毁连接。
+     * 此前直接 destroy → 客人只看到连接断开 → 8 次重连全部失败（约 20~30s）才被告知可以回主菜单 */
+    if (NET.active && NET.isHost && G.started && !G.over && G.players.length) {
+      try {
+        const ranking = G.players.slice().sort((a, b) => (a.alive !== b.alive) ? (a.alive ? -1 : 1) : (netWorth(b) - netWorth(a)));
+        NET.broadcast({ t: 'chat', from: '系统', seat: -1, text: '🏠 房主已返回主菜单，本局到此结束' });
+        NET.broadcast({ t: 'over', order: ranking.map(p => p.idx), worth: ranking.map(p => netWorth(p)), hostLeft: true });
+      } catch (e) { /* 广播失败不影响回菜单 */ }
+    }
     G.gameId++;
     G.over = true;
     G.started = false;
@@ -163,10 +181,12 @@ const main = (() => {
     /* 联机残留清理：不销毁 NET 的话，下一局单机里 decide() 仍会把 AI 座位的决策发给还连着的旧客人 */
     if (NET.active) { try { NET.destroy(); } catch (e) { /* */ } }
     window.__netGuest = false;
+    window.__hostLeft = false;
     window.__seatCheck = null;
     hideReconnect();
     chatVisible(false);
     try { sessionStorage.removeItem('df_mp'); } catch (e) { /* */ }
+    if (ui.refreshCareerBadge) { try { ui.refreshCareerBadge(); } catch (e) { /* */ } }
     BGM.setMode('menu');
   }
 
@@ -177,6 +197,8 @@ const main = (() => {
       const r = await orig(ranking, humanWon);
       if (r === 'menu') { backToMenu(); return; }
       if (window.__netGuest) {
+        /* 房主已离开（连接已销毁）：没有下一局可等，直接回主菜单 */
+        if (!NET.active || window.__hostLeft) { backToMenu(); return; }
         /* 客人没有开局权：留在桌边等房主点「再来一局」（房主会重新广播 start） */
         ui.toast('⏳ 等待房主开始下一局…（也可返回主菜单）', '⏳');
         return;
@@ -415,7 +437,15 @@ const main = (() => {
     }, 3000);
     /* 与房主断开：走重连循环（原版此处被第二个同名注册覆盖成「直接回菜单」，重连逻辑从未运行） */
     NET.on('kicked', () => {
-      if (!G.started || G.over) { hideReconnect(); main.backToMenu(); return; }
+      if (!G.started || G.over) {
+        /* 房主离场前已广播终局名次 → 结算画面正在展示：不要把人立刻甩回主菜单，让他看完名次自己点「返回主菜单」 */
+        if (G.over && window.__hostLeft) {
+          try { NET.destroy(); } catch (e) { /* */ }
+          ui.toast('🔌 房主已离开房间，本局结束', '🔌');
+          return;
+        }
+        hideReconnect(); main.backToMenu(); return;
+      }
       ui.toast('与房主的连接已断开，尝试重连…', '🔌');
       guestReconnectLoop();
     });
@@ -425,8 +455,16 @@ const main = (() => {
       const ranking = m.order.map(i => G.players[i]).filter(Boolean);
       if (!ranking.length) return;
       G.over = true;
+      window.__hostLeft = !!m.hostLeft;
+      /* 生涯档案：客机不跑对局逻辑，用房主附带的单局统计折叠自己座位；房主离场 = 中止局，不计入 */
+      if (Array.isArray(m.stats)) G.stats = m.stats;
+      if (m.token) G.matchToken = m.token;
+      G.demoMode = false;
+      G.matchAborted = !!m.hostLeft;
+      ui.abortTransient();   /* 房主离场时客人可能正停在某个等待弹窗 / 过场上 */
       const myWin = ranking[0].idx === NET.mySeat;
       if (myWin) SFX.win(); else SFX.lose();
+      if (m.hostLeft) ui.toast('🏠 房主已返回主菜单，本局到此结束', '🏠');
       ui.showGameOver(ranking, myWin);   /* 经 hookGameOver 包裹：再来一局/回菜单 → 客人统一回到大厅 */
     });
   }
@@ -447,6 +485,7 @@ const main = (() => {
     ui.abortTransient();
     ui.applySpeed(ui.loadSpeed(), { persist: false });
     window.__netGuest = true;
+    window.__hostLeft = false;
     hideReconnect();
     $('#net-lobby').classList.add('hidden');
     $('#start-screen').classList.add('hidden');
@@ -597,30 +636,41 @@ const main = (() => {
     });
   }
 
+  /* 每一步独立 try：任何一步抛错只记录、不连带跳过后续
+   * （曾因 bgm.js 一个 ReferenceError 让 debugAutostart / 排行榜按钮 / 联机大厅全部被跳过） */
   function init() {
-    try {
-      buildCharCards();
-      bindStart();
-      ui.bindChrome();
-      hookGameOver();
-      SFX.loadSamples();
-      BGM.setMode('menu');   // 主界面音乐（首次手势后自动起播）
-      window.__initStage = 'before-auto';
-      netLobbyInit();
-      try {
-        const ne = document.getElementById('opt-name');
-        if (ne) ne.value = localStorage.getItem('df_nickname') || '';
-      } catch (e) {}
+    const step = (name, fn) => {
+      try { fn(); } catch (e) {
+        window.__initErr = (window.__initErr ? window.__initErr + '\n' : '') + name + ': ' + String(e && e.stack || e);
+        console.error('[init] ' + name + ' 失败', e);
+      }
+    };
+    step('charCards', buildCharCards);
+    step('bindStart', bindStart);
+    step('chrome', () => ui.bindChrome());
+    step('gameOver', hookGameOver);
+    step('sfx', () => SFX.loadSamples());
+    step('bgm', () => BGM.setMode('menu'));   // 主界面音乐（首次手势后自动起播）
+    window.__initStage = 'before-auto';
+    step('netLobby', netLobbyInit);
+    step('nickname', () => {
+      const ne = document.getElementById('opt-name');
+      if (ne) ne.value = localStorage.getItem('df_nickname') || '';
+    });
+    step('records', () => {
       const rb = document.getElementById('btn-records');
       if (rb) rb.addEventListener('click', () => ui.showLeaderboard());
-            debugAutostart();
-      window.__initStage = 'done';
-    } catch (e) {
-      window.__initErr = String(e && e.stack || e);
-      throw e;
-    }
+    });
+    step('career', () => {
+      const cb = document.getElementById('btn-career');
+      if (cb) cb.addEventListener('click', () => ui.showCareer());
+      if (ui.refreshCareerBadge) ui.refreshCareerBadge();
+    });
+    step('autostart', debugAutostart);
+    window.__initStage = 'done';
   }
 
-  document.addEventListener('DOMContentLoaded', init);
+  /* 脚本由首屏加载器在 DOMContentLoaded 之后注入执行，此时事件已过，需直接启动 */
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
   return { restart, startMatch, backToMenu };
 })();
