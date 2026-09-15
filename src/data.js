@@ -1,6 +1,13 @@
 /* ============================================================
  * 大富翁 · 富贵人生 —— 静态游戏数据
  * 棋盘 40 格 / 机会卡 / 命运卡 / 道具 / 角色
+ * ============================================================
+ * 【多棋盘架构注记（规划，未实现）】未来主题棋盘（如「江湖」「星际」）按命名空间隔离资产：
+ *   - 数据：BOARD/GROUPS/CHANCE_CARDS/DESTINY_CARDS/JAIL_CASES 打包为 BOARDS[themeId]，当前 40 格为 BOARDS.classic；
+ *   - 3D 模型：assets/models/<theme>/{props3d,specials3d,chars3d}/，index.html 清单按主题分段懒加载；
+ *   - 2D 图：assets/img/<theme>/…，CHARACTERS 头像/棋子路径同样加主题前缀；
+ *   - 道具 PROPS 与 CFG 为主题无关的通用层，主题只能通过 overrides（价格/文案）微调，不新增 key；
+ *   - 引擎（game.js）只读 BOARD/JAIL_POS 等别名，切换主题 = 换绑别名 + 重建 tiles，不改回合流。
  * ============================================================ */
 'use strict';
 
@@ -200,15 +207,26 @@ const DESTINY_CARDS = [
   { icon:'🧯', title:'有惊无险',   desc:'虚惊一场，安慰奖 + $500',    money:+500, cut:{ fx:'pulse', bg:'gray' } },
 ];
 
-/* ---------- 道具 ---------- */
+/* ---------- 道具（道具体系 2.0，见 DESIGN_PROPS_V2.md §3） ----------
+ * rarity: 1 常见 / 2 精良 / 3 稀有 / 4 史诗（与生涯称号五档配色同源）
+ * counter: 商店「克制提示」文案；顺序即商店/芯片展示顺序
+ * 一次性状态槽（复用护身符 p.shield 模式）：insurance→p.insurance / bailiff→p.bailiff / piggy→p.piggy
+ * 主动目标型：block/demo/sweeper/rush 选格；thief/frame 选对手玩家 */
 const PROPS = {
-  dice:   { name:'遥控骰子', icon:'🔮', price:4000,  desc:'指定你下一次掷出的点数（1-6）' },
-  block:  { name:'路障',     icon:'🚧', price:3000,  desc:'放在任意格子上，路过的玩家被迫停下' },
-  shield: { name:'护身符',   icon:'🧿', price:4000,  desc:'免除下一次应付的租金' },
-  demo:   { name:'拆迁令',   icon:'💣', price:6000,  desc:'拆除目标建筑的一层' },
-  equal:  { name:'均富卡',   icon:'⚖️', price:15000, desc:'全场玩家现金平均分配，天下大同' },
+  block:     { name:'路障',       icon:'🚧', price:3000,  rarity:1, desc:'放在任意格子上，路过的玩家被迫停下', counter:'被克制：清障车 · 遥控骰子可绕开' },
+  dice:      { name:'遥控骰子',   icon:'🔮', price:4000,  rarity:2, desc:'指定你下一次掷出的点数（1-6）', counter:'软克制：路障（锁小点数绕开）' },
+  shield:    { name:'护身符',     icon:'🧿', price:4000,  rarity:2, desc:'免除下一次应付的租金', counter:'被克制：强制收租令' },
+  demo:      { name:'拆迁令',     icon:'💣', price:6000,  rarity:3, desc:'拆除目标建筑的一层', counter:'被克制：保险单 · 加急施工令可回补' },
+  equal:     { name:'均富卡',     icon:'⚖️', price:15000, rarity:4, desc:'全场玩家现金平均分配，天下大同（持私房钱者不参与）', counter:'被克制：私房钱' },
+  sweeper:   { name:'清障车',     icon:'🚛', price:2500,  rarity:1, desc:'拆除场上任意 1 个路障（含自己放错的），路障直接消失', counter:'克制：路障' },
+  insurance: { name:'保险单',     icon:'📋', price:3500,  rarity:2, desc:'一次性：你名下建筑下次被拆迁令/市政施工拆除时层数不减', counter:'克制：拆迁令' },
+  bailiff:   { name:'强制收租令', icon:'📢', price:3500,  rarity:2, desc:'一次性：你下次收到租金时，租客的护身符失效仍须付租', counter:'克制：护身符' },
+  piggy:     { name:'私房钱',     icon:'🐷', price:8000,  rarity:3, desc:'一次性：均富卡结算时你保留原现金，不参与均摊', counter:'克制：均富卡' },
+  thief:     { name:'窃贼卡',     icon:'🦝', price:5000,  rarity:3, desc:'指定一名对手，随机偷走其库存 1 件道具（偷不到窃贼卡）', counter:'克制：一切囤货（对策：早用、少囤）' },
+  rush:      { name:'加急施工令', icon:'🏗️', price:6000,  rarity:3, desc:'自有地块 +1 层（普通周最高 3 级，建设周可冲 4 级）', counter:'对冲：拆迁令' },
+  frame:     { name:'诬陷卡',     icon:'🕵️', price:6000,  rarity:3, desc:'选定一名对手，令其被警车立即押送入狱', counter:'致人入狱：入狱归因记在使用者头上' },
 };
-const PROP_MAX = 2;   // 每种道具最多持有数量
+const PROP_MAX = 2;   // 每种道具最多持有数量（购买上限；窃贼赃物不受此限）
 
 /* ---------- 工具 ---------- */
 function fmt(n) { return (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US'); }
