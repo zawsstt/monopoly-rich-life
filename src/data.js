@@ -13,6 +13,7 @@ const CFG = {
   MAX_LEVEL: 4,         // 建筑最高等级
   RENT_MULT: [0.12, 0.5, 1.35, 2.3, 5.5],   // 租金 = 价格 × 系数[等级]
   STATION_RENT: [2500, 4000, 7000, 11000],
+  UTILITY_RENT: [1200, 3000],   // 公用事业租金 = 骰点 × [持有 1 家, 持有 2 家]（地契文案与 rentOf 共用，防止文案漂移）
   LUCKY_REWARD: 5000,   // 幸运格奖励
   AUCTION_START: 0.5,   // 拍卖起拍价 = 市值一半（银行保底回收价）
   AUCTION_STEP: 0.05,   // 每次加价 = 市值比例
@@ -39,27 +40,27 @@ const JAIL_CASES = [
 
 const CHARACTERS = [
   { id:'boss',   name:'富老板',  emoji:'🤵', color:'#f0a818', dark:'#b97e00',
-    avatarImg:'assets/img/face2_boss.png?v=39', tokenImg:'assets/img/full2_boss.png?v=39',
+    avatarImg:'assets/img/face3_boss.png?v=40', tokenImg:'assets/img/full3_boss.png?v=40',
     poseHit:'assets/img/pose_boss_hit.png', poseCheer:'assets/img/pose_boss_cheer.png',
     title:'地产大亨', desc:'白手起家，出手阔绰，信奉“地产行则百业兴”。' },
   { id:'qian',   name:'钱掌柜',  emoji:'👩‍💼', color:'#b45cf2', dark:'#8a2fc9',
-    avatarImg:'assets/img/face2_qian.png?v=39', tokenImg:'assets/img/full2_qian.png?v=39',
+    avatarImg:'assets/img/face3_qian.png?v=40', tokenImg:'assets/img/full3_qian.png?v=40',
     poseHit:'assets/img/pose_qian_hit.png', poseCheer:'assets/img/pose_qian_cheer.png',
     title:'商界女强人', desc:'精打细算，账算得比谁都快，从不做亏本买卖。' },
   { id:'tang',   name:'糖糖',    emoji:'👧', color:'#ff5964', dark:'#d02f3a',
-    avatarImg:'assets/img/face2_tang.png?v=39', tokenImg:'assets/img/full2_tang.png?v=39',
+    avatarImg:'assets/img/face3_tang.png?v=40', tokenImg:'assets/img/full3_tang.png?v=40',
     poseHit:'assets/img/pose_tang_hit.png', poseCheer:'assets/img/pose_tang_cheer.png',
     title:'元气少女', desc:'运气爆棚，走到哪都有好事发生。' },
   { id:'tu',     name:'土老财',  emoji:'👴', color:'#2ecc71', dark:'#1d9e50',
-    avatarImg:'assets/img/face2_tu.png?v=39', tokenImg:'assets/img/full2_tu.png?v=39',
+    avatarImg:'assets/img/face3_tu.png?v=40', tokenImg:'assets/img/full3_tu.png?v=40',
     poseHit:'assets/img/pose_tu_hit.png', poseCheer:'assets/img/pose_tu_cheer.png',
     title:'囤地狂魔', desc:'穿背带裤的乡下地主，就爱一寸一寸囤地。' },
   { id:'ren',    name:'丧彪',    emoji:'🧟', color:'#3d7bff', dark:'#2456c9',
-    avatarImg:'assets/img/face2_ren.png?v=39', tokenImg:'assets/img/full2_ren.png?v=39',
+    avatarImg:'assets/img/face3_ren.png?v=40', tokenImg:'assets/img/full3_ren.png?v=40',
     poseHit:'assets/img/pose_ren_hit.png', poseCheer:'assets/img/pose_ren_cheer.png',
     title:'神秘怪人', desc:'来无影去无踪，走路慢吞吞，但出手从不缺席。' },
   { id:'doudou', name:'豆豆',    emoji:'🤖', color:'#22d3d3', dark:'#0e9e9e',
-    avatarImg:'assets/img/face2_doudou.png?v=39', tokenImg:'assets/img/full2_doudou.png?v=39',
+    avatarImg:'assets/img/face3_doudou.png?v=40', tokenImg:'assets/img/full3_doudou.png?v=40',
     poseHit:'assets/img/pose_doudou_hit.png', poseCheer:'assets/img/pose_doudou_cheer.png',
     title:'AI 投资人', desc:'算力惊人的机器人，从不情绪化，也从不迟到。' },
 ];
@@ -234,7 +235,7 @@ function utilityCount(ownerIdx) {
 function rentOf(idx, ownerIdx, level) {
   const t = BOARD[idx];
   if (t.type === 'station') return CFG.STATION_RENT[Math.max(0, stationCount(ownerIdx) - 1)];
-  if (t.type === 'utility') return G.lastRoll * (utilityCount(ownerIdx) === 2 ? 3000 : 1200);
+  if (t.type === 'utility') return G.lastRoll * (utilityCount(ownerIdx) === 2 ? CFG.UTILITY_RENT[1] : CFG.UTILITY_RENT[0]);
   let r = t.price * CFG.RENT_MULT[level];
   if (level === 0 && monopolized(idx, ownerIdx)) r *= 2;
   return Math.round(r);
