@@ -19,6 +19,7 @@ const G = {
   speed: 1,
   over: false,
   started: false,
+  watchAfterOut: false,  // 人类全部出局后选择「继续观战」
   chanceDeck: [],
   destinyDeck: [],
 };
@@ -82,7 +83,7 @@ function newGame(charIds, humanCharId, opts) {
     inJail: false, jailTurns: 0, skipNext: 0, shield: false,
     forcedDice: null, bailCards: 0, props: {},
   }));
-/* 自定义名号：人类玩家使用大厅输入的昵称 */
+  /* 自定义名号：人类玩家使用大厅输入的昵称 */
   if (opts.nickname) {
     const h = G.players.find(p => !p.ai);
     if (h) h.name = opts.nickname;
@@ -96,6 +97,14 @@ function newGame(charIds, humanCharId, opts) {
     });
   }
   G.tiles = BOARD.map(() => ({ owner: null, level: 0 }));
+/* 满级展示模式（?allmax=1）：22 地产全部拉到 lv4 城堡，玩家现金充足防破产打断 */
+  if (opts.allMax) {
+    G.players.forEach(p => { p.money = 999999; });
+    let ownerCycle = 0;
+    BOARD.forEach((t, i) => {
+      if (t.type === 'prop') { G.tiles[i].owner = ownerCycle % G.players.length; G.tiles[i].level = 4; ownerCycle++; }
+    });
+  }
   G.cur = -1;
   G.round = 1;
   G.maxRounds = opts.maxRounds;
@@ -105,9 +114,18 @@ function newGame(charIds, humanCharId, opts) {
   G.lastRoll = 1;
   G.season = null;
   G.milestones = {};
-  G.stats = G.players.map(() => ({ rentPaid: 0, rentGot: 0, jailed: 0, bought: 0 }));
+  G.stats = G.players.map(() => ({ rentPaid: 0, rentGot: 0, jailed: 0, bought: 0,
+    rentBest: 0, served: 0, bail: 0, bailCardUsed: 0, upgrades: 0, lv4: 0, auctionWins: 0, monopolies: 0,
+    passStart: 0, flights: 0, blocksSet: 0, blocksHit: 0, demos: 0, propsUsed: 0, cards: 0, potWon: 0,
+    luckyHits: 0, sixes: 0, bankrupt: 0, resigned: 0, peakMoney: opts.startMoney | 0 }));
+  /* 生涯档案：本机座位 = 大厅点选角色；展示局(allMax)不计入；matchToken 防同一局重复计入 */
+  G.localIdx = G.players.findIndex(p => p.charId === humanCharId);
+  G.demoMode = !!opts.allMax;
+  G.matchAborted = false;
+  G.matchToken = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   G.over = false;
   G.started = true;
+  G.watchAfterOut = false;
   G.chanceDeck = shuffleArr(CHANCE_CARDS.map((_, i) => i));
   G.destinyDeck = shuffleArr(DESTINY_CARDS.map((_, i) => i));
   ui.initGameScene();
@@ -119,18 +137,46 @@ function newGame(charIds, humanCharId, opts) {
 /* ---------- 主循环 ---------- */
 async function runGame() {
   const gid = G.gameId;
+  let faults = 0;
   while (G.started && !G.over) {
     if (gid !== G.gameId) return;
-    await playTurn(gid);
-    if (gid !== G.gameId) return;
-    if (G.over) break;
-    await advanceTurn(gid);
-    if (gid !== G.gameId) return;
+    try {
+      await playTurn(gid);
+      if (gid !== G.gameId) return;
+      if (G.over) break;
+      await advanceTurn(gid);
+      if (gid !== G.gameId) return;
+      faults = 0;
+    } catch (e) {
+      /* 回合管线兜底：单回合异常不冻结整局——记录、提示、跳到下一位；连续 3 次异常则结算止损 */
+      if (gid !== G.gameId) return;
+      console.error('[runGame] 回合异常', e);
+      faults++;
+      try { ui.abortTransient(); } catch (e2) { /* */ }
+      try { ui.toast(`⚠️ 回合处理出错，已跳过（${faults}/3）`, '⚠️'); ui.log('⚠️ 回合处理出错：' + String(e && e.message || e), 'bad'); } catch (e3) { /* */ }
+      if (faults >= 3) { try { await endGame(); } catch (e4) { G.over = true; } return; }
+      const prev = G.cur;
+      let next = prev;
+      for (let k = 0; k < G.players.length; k++) { next = (next + 1) % G.players.length; if (G.players[next] && G.players[next].alive) break; }
+      G.cur = next;
+    }
   }
 }
 
 async function advanceTurn(gid) {
   if (alivePlayers().length <= 1) { await endGame(); return; }
+  /* 人类全部出局（破产/认输）而 AI 仍在厮杀：默认立即结算，不把玩家钉在几十回合的纯 AI 对局里干等
+   * （观战模式全员 AI，不触发；选择「继续观战」后本局不再询问） */
+  if (!G.watchAfterOut && G.players.some(p => !p.ai) && !G.players.some(p => !p.ai && p.alive)) {
+    const watch = await ui.choice({
+      title: '💀 你已出局',
+      html: '<p>本局已没有你操控的玩家。可以直接查看结算，或留下来观战 AI 决出最后赢家。</p>',
+      choices: [{ v: false, label: '查看结算', kind: 'primary' }, { v: true, label: '继续观战', kind: 'ghost' }],
+    });
+    if (gid !== G.gameId) return;
+    if (!watch) { await endGame(); return; }
+    G.watchAfterOut = true;
+  }
   const prev = G.cur;
   let next = prev;
   for (let k = 0; k < G.players.length; k++) {
@@ -185,6 +231,7 @@ async function playTurn(gid) {
     player.jailTurns++;
     if (player.jailTurns > CFG.JAIL_MAX) {
       player.inJail = false; player.jailTurns = 0;
+      if (G.stats) G.stats[player.idx].served++;
       ui.setTokenHidden(player.idx, false);   // 刑满释放：角色重新出现
       ui.toast(`⏱️ ${pname(player)} 刑满释放`, '⛓️');
       ui.log(`${pname(player)} 刑满释放，重获自由`, 'info');
@@ -198,7 +245,7 @@ async function playTurn(gid) {
           choices:[{v:true,label:'使用，马上出狱',kind:'primary'},{v:false,label:'继续蹲着',kind:'ghost'}],
         });
         if (gid !== G.gameId) return;
-        if (use) { player.bailCards--; freed = true; ui.toast(`🎫 ${pname(player)} 使用出狱许可证`, '🎫'); }
+        if (use) { player.bailCards--; freed = true; ui.toast(`🎫 ${pname(player)} 使用出狱许可证`, '🎫'); if (G.stats) G.stats[player.idx].bailCardUsed++; }
       }
       if (!freed) {
         const pay = await decide(player, () => player.money >= 8000, {
@@ -211,6 +258,7 @@ async function playTurn(gid) {
           await charge(player, CFG.JAIL_BAIL, null, { toPot:true });
           if (gid !== G.gameId) return;
           freed = player.alive;
+          if (freed && G.stats) G.stats[player.idx].bail++;
         }
       }
       if (freed) {
@@ -247,6 +295,7 @@ async function playTurn(gid) {
   await ui.rollDice(value);
   if (gid !== G.gameId) return;
   G.lastRoll = value;
+  if (G.stats && value === 6) G.stats[player.idx].sixes++;
   ui.log(`<b style="color:${playerColor(player)}">${pname(player)}</b> 掷出 <b>${value}</b> 点`, 'dice');
 
   // —— 移动 ——
@@ -274,7 +323,7 @@ async function moveSteps(gid, player, steps, { silentStart = false } = {}) {
     const from = player.pos;
     player.pos = (player.pos + 1) % BOARD.length;
     if (player.pos === 0) {
-      gainMoney(player, seasonSalary(), { label:'工资' });
+      gainMoney(player, seasonSalary(), { label:'工资' }); if (G.stats) G.stats[player.idx].passStart++;
       ui.log(`${pname(player)} 经过起点，领取工资 <b>${fmt(seasonSalary())}</b>`, 'good');
     }
     await ui.moveToken(player, true);
@@ -283,6 +332,7 @@ async function moveSteps(gid, player, steps, { silentStart = false } = {}) {
     if (G.blocks[player.pos] != null && player.pos !== 0) {
       const by = G.blocks[player.pos];
       delete G.blocks[player.pos];
+      if (G.stats) G.stats[player.idx].blocksHit++;
       ui.updateTile(player.pos);
       ui.renderBlocks();   // 路障即时消除
       const byName = G.players[by] ? pname(G.players[by]) : '???';
@@ -299,13 +349,13 @@ async function moveSteps(gid, player, steps, { silentStart = false } = {}) {
 async function moveDirect(gid, player, target, { collectSalary = true, fx = null } = {}) {
   // 沿前进方向走到 target；fx='plane' 时由专机载着绕棋盘飞行
   // 飞行途中不展示人物，只有交通工具（专机）；落地后恢复
-  if (fx) { ui.setTokenHidden(player.idx, true); ui.rideStart(player, fx); }
+  if (fx) { ui.setTokenHidden(player.idx, true); ui.rideStart(player, fx); if (fx === 'plane' && G.stats) G.stats[player.idx].flights++; }
   let guard = 0;
   while (player.pos !== target && guard++ < BOARD.length) {
     if (gid !== G.gameId) { ui.rideEnd(player); ui.setTokenHidden(player.idx, false); return; }
     player.pos = (player.pos + 1) % BOARD.length;
     if (player.pos === 0 && collectSalary) {
-      gainMoney(player, seasonSalary(), { label:'工资' });
+      gainMoney(player, seasonSalary(), { label:'工资' }); if (G.stats) G.stats[player.idx].passStart++;
       ui.log(`${pname(player)} 经过起点，领取工资 <b>${fmt(seasonSalary())}</b>`, 'good');
     }
     await ui.moveToken(player, true, { fast: !!fx });
@@ -386,10 +436,11 @@ async function runAuction(gid, idx, { seller } = {}) {
   }
   let idle = 0;
   const active = new Set(order.map(p => p.idx));
-  /* 大厅入口询问：本地玩家选择参与或旁观（联机客人仍走各自终端的询问） */
-  const humanP = order.find(p => !p.ai && !(NET.active && NET.isRemoteSeat(p.idx)));
-  if (humanP && humanP.money >= bankPrice) {
-    const jr = await ui.auctionJoinAsk({ idx, bankPrice });
+  /* 大厅入口询问：每位本地人类依次选择参与或旁观（同屏多人逐个问；联机客人仍走各自终端的询问） */
+  const localHumans = order.filter(p => !p.ai && !(NET.active && NET.isRemoteSeat(p.idx)));
+  for (const humanP of localHumans) {
+    if (humanP.money < bankPrice) continue;
+    const jr = await ui.auctionJoinAsk({ idx, bankPrice, who: localHumans.length > 1 ? pname(humanP) : null });
     if (gid !== G.gameId) return null;
     if (jr === 'watch') {
       active.delete(humanP.idx); idle++;
@@ -465,7 +516,7 @@ async function runAuction(gid, idx, { seller } = {}) {
     ui.log(`🔨 落槌：<b style="color:${playerColor(leader)}">${pname(leader)}</b> 以 <b>${fmt(curBid)}</b> 竞得 <b>${t.name}</b>（拍卖款归 ${pname(seller)} 偿债）`, 'buy');
     ui.news(`🔨 拍卖成交：${pname(leader)} 以 ${fmt(curBid)} 拍得 ${t.name}！`);
     milestone('auction', `${pname(leader)} 首次拍卖竞得 ${t.name}`);
-    if (G.stats) G.stats[leader.idx].bought++;
+    if (G.stats) { G.stats[leader.idx].bought++; G.stats[leader.idx].auctionWins++; if (monopolized(idx, leader.idx)) G.stats[leader.idx].monopolies++; }
     return { winner: leader, price: curBid };
   }
   // 无人应价 → 银行保底半价回收
@@ -504,7 +555,7 @@ async function resolveTile(gid, player, depth) {
   if (idx === G.luckyTile) {
     G.luckyTile = -1;
     ui.updateTile(idx);
-    gainMoney(player, CFG.LUCKY_REWARD, { label:'幸运格' });
+    gainMoney(player, CFG.LUCKY_REWARD, { label:'幸运格' }); if (G.stats) G.stats[player.idx].luckyHits++;
     SFX.win();
     ui.toast(`⭐ ${pname(player)} 踩中幸运格，获得 ${fmt(CFG.LUCKY_REWARD)}！`, '⭐');
     ui.log(`⭐ ${pname(player)} 踩中幸运格 ${t.name}，+${fmt(CFG.LUCKY_REWARD)}`, 'good');
@@ -548,7 +599,7 @@ async function resolveTile(gid, player, depth) {
           ui.tileFx(idx, 'buy');
           if (G.stats) G.stats[player.idx].bought++;
           milestone('firstbuy', `${pname(player)} 第一次购地置业`);
-          if (monopolized(idx, player.idx)) milestone('monopoly', `${pname(player)} 完成同色垄断`);
+          if (monopolized(idx, player.idx)) { milestone('monopoly', `${pname(player)} 完成同色垄断`); if (G.stats) G.stats[player.idx].monopolies++; }
           ui.updatePlayers();
           SFX.buy();
           ui.toast(`🏷️ ${pname(player)} 买下了 ${t.name}`, deedBadge(t));
@@ -573,6 +624,7 @@ async function resolveTile(gid, player, depth) {
             await charge(player, cost, null);
             if (gid !== G.gameId || !player.alive) return;
             st.level++;
+            if (G.stats) { G.stats[player.idx].upgrades++; if (st.level >= CFG.MAX_LEVEL) G.stats[player.idx].lv4++; }
             ui.updateTile(idx);
             ui.tileFx(idx, 'up');
             ui.fireworkAtTile(idx);
@@ -618,6 +670,7 @@ async function resolveTile(gid, player, depth) {
       const pool = isChance ? CHANCE_CARDS : DESTINY_CARDS;
       if (deck.length === 0) deck.push(...shuffleArr(pool.map((_, i) => i)));
       const card = pool[deck.shift()];
+      if (G.stats) G.stats[player.idx].cards++;
       const ok = await ui.showCard(card, isChance ? 'chance' : 'destiny', player);
       if (gid !== G.gameId) return;
       await applyCard(gid, player, card, depth);
@@ -638,7 +691,7 @@ async function resolveTile(gid, player, depth) {
         const win = G.pot;
         G.pot = 0;
         ui.updateHUD();
-        gainMoney(player, win, { label:'奖池' });
+        gainMoney(player, win, { label:'奖池' }); if (G.stats) G.stats[player.idx].potWon += win;
         ui.toast(`⛲ 恭喜！${pname(player)} 独得中央公园奖池 ${fmt(win)}！`, '⛲');
         ui.log(`⛲ ${pname(player)} 落在中央公园，捧走奖池 <b>${fmt(win)}</b>`, 'good');
         ui.news(`⛲ ${pname(player)} 在中央公园捧走奖池 ${fmt(win)}！`);
@@ -695,6 +748,14 @@ async function applyCard(gid, player, card, depth) {
     else await charge(player, -card.money, null, { toPot: !!card.toPot });
     if (gid !== G.gameId) return;
   }
+  /* 幸运转盘：[min,max] 内随机整百金额（此前 data.js 声明了 randomMoney 但引擎从未处理 → 死卡，玩家看完过场一无所得） */
+  if (Array.isArray(card.randomMoney) && card.randomMoney.length === 2) {
+    const lo = Math.min(card.randomMoney[0], card.randomMoney[1]), hi = Math.max(card.randomMoney[0], card.randomMoney[1]);
+    const amt = Math.round((lo + Math.random() * (hi - lo)) / 100) * 100;
+    gainMoney(player, amt, { label: card.title });
+    ui.toast(`🎰 转盘停在 ${fmt(amt)}！`, '🎰');
+    ui.log(`🎰 ${pname(player)} 的幸运转盘转到 <b>${fmt(amt)}</b>`, 'good');
+  }
   if (card.global != null) {
     ui.news(`📰 快讯 · ${card.title}：${card.desc}`);
     for (const q of alivePlayers()) {
@@ -744,7 +805,7 @@ async function applyCard(gid, player, card, depth) {
   if (card.skip) { player.skipNext += card.skip; ui.toast(`🚧 ${pname(player)} 下回合暂停行动`, '🚧'); }
   if (card.potWin && G.pot > 0) {
     const win = G.pot; G.pot = 0; ui.updateHUD();
-    gainMoney(player, win, { label:'奖池' });
+    gainMoney(player, win, { label:'奖池' }); if (G.stats) G.stats[player.idx].potWon += win;
     ui.log(`🏆 ${pname(player)} 独得奖池 <b>${fmt(win)}</b>`, 'good');
   }
   if (card.gotoJail) { await sendToJail(gid, player, { reason: card.jailReason || null }); await sleep(400); }
@@ -782,10 +843,16 @@ async function applyCard(gid, player, card, depth) {
     await resolveTile(gid, player, depth + 1);
   } else if (card.moveRel != null) {
     const steps = Math.abs(card.moveRel);
-    for (let s = 0; s < steps; s++) {
+    if (card.moveRel > 0) {
+      /* 正数 = 前进（共享单车「前进 2 格」此前无视符号一律后退）；沿用普通行走：经过起点领工资、撞路障停下 */
+      await moveSteps(gid, player, steps);
       if (gid !== G.gameId) return;
-      player.pos = (player.pos - 1 + BOARD.length) % BOARD.length;
-      await ui.moveToken(player, true);
+    } else {
+      for (let s = 0; s < steps; s++) {
+        if (gid !== G.gameId) return;
+        player.pos = (player.pos - 1 + BOARD.length) % BOARD.length;
+        await ui.moveToken(player, true);
+      }
     }
     await resolveTile(gid, player, depth + 1);
   } else if (card.nearest) {
@@ -804,6 +871,7 @@ async function applyCard(gid, player, card, depth) {
 /* ---------- 金钱流 / 破产 ---------- */
 function gainMoney(p, amt, { label = '' } = {}) {
   p.money += amt;
+  if (G.stats && G.stats[p.idx] && p.money > G.stats[p.idx].peakMoney) G.stats[p.idx].peakMoney = p.money;
   ui.moneyFloat(p, amt);
   ui.updatePlayers();
   if (amt > 0) SFX.cash();
@@ -823,6 +891,7 @@ async function charge(p, amount, creditor, { toPot = false } = {}) {
       if (toPot && !creditor) G.pot += remain;
       releaseAssets(p);
       p.alive = false;
+      if (G.stats) G.stats[p.idx].bankrupt = 1;
       ui.removeToken(p);
       ui.cancelRollFor(p);
       ui.updatePlayers();
@@ -844,6 +913,8 @@ async function charge(p, amount, creditor, { toPot = false } = {}) {
     if (G.stats) {
       G.stats[p.idx].rentPaid += amount;
       G.stats[creditor.idx].rentGot += amount;
+      if (amount > G.stats[creditor.idx].rentBest) G.stats[creditor.idx].rentBest = amount;
+      if (creditor.money > G.stats[creditor.idx].peakMoney) G.stats[creditor.idx].peakMoney = creditor.money;
     }
   }
   if (toPot && !creditor) {
@@ -892,9 +963,12 @@ async function liquidate(p, need) {
     } else {
       r = await ui.sellModal(p, need, list);
     }
-    if (r === 'giveup') return false;
+    if (gid !== G.gameId) return false;
+    /* 联机客人 120s 无应答（askSeat 超时 → null）视同认命：此前 r.type 会直接 TypeError 卡死整局 */
+    if (!r || r === 'giveup') return false;
     if (r.type === 'sell') {
       const it = r.item;
+      if (!it || G.tiles[it.idx].owner !== p.idx) continue;   /* 客人上报的条目已失效则重新出清单 */
       doSell(p, it.idx, it.kind);
       ui.updateTile(it.idx);
       ui.updatePlayers();
@@ -902,6 +976,7 @@ async function liquidate(p, need) {
       ui.log(`你变卖 ${BOARD[it.idx].name}${it.kind === 'level' ? '的建筑' : ''}，回笼 ${fmt(it.refund)}`, 'bad');
     } else if (r.type === 'auction') {
       const it = r.item;
+      if (!it || G.tiles[it.idx].owner !== p.idx) continue;
       ui.toast(`🔨 你的 ${BOARD[it.idx].name} 上拍！底价为银行半价，价高者得`, '🔨');
       await runAuction(gid, it.idx, { seller: p });
       if (gid !== G.gameId) return false;
@@ -958,6 +1033,7 @@ async function applyPropUse(gid, player, key, arg, byAI) {
   ui.propFanfare(player, key);
   player.props[key]--;
   ui.updatePlayers();
+  if (G.stats) { G.stats[player.idx].propsUsed++; if (key === 'block') G.stats[player.idx].blocksSet++; }
   const who = `<b style="color:${playerColor(player)}">${pname(player)}</b>`;
 
   switch (key) {
@@ -985,6 +1061,7 @@ async function applyPropUse(gid, player, key, arg, byAI) {
       const st = G.tiles[arg];
       if (st.level > 0) {
         st.level--;
+        if (G.stats) G.stats[player.idx].demos++;
         ui.updateTile(arg);
         ui.tileFx(arg, 'down');
         SFX.boom();
@@ -1031,11 +1108,47 @@ async function endGame() {
     if (a.alive !== b.alive) return a.alive ? -1 : 1;
     return netWorth(b) - netWorth(a);
   });
-  const human = G.players.find(p => !p.ai);
-  const humanWon = human && ranking[0] === human;
+  /* 「夺冠」以本机人类为准：同屏多人任一本地玩家夺冠即庆祝；联机客人夺冠时房主不放彩带 */
+  const champ = ranking[0];
+  const humanWon = !!champ && !champ.ai && !(NET.active && NET.isRemoteSeat(champ.idx));
   ui.log(`🏁 游戏结束！冠军：${pname(ranking[0])}`, 'turn');
   if (humanWon) SFX.win(); else SFX.lose();
+  /* 联机：把最终名次广播给客人（此前客人永远看不到结算画面，对局在他们那里「无声消失」） */
+  if (NET.active && NET.isHost && typeof NET.broadcast === 'function') {
+    NET.broadcast({ t: 'over', order: ranking.map(p => p.idx), worth: ranking.map(p => netWorth(p)), stats: G.stats, token: G.matchToken });
+  }
   await ui.showGameOver(ranking, humanWon);
+}
+
+/* ---------- 认输离场 ----------
+ * 输定了的玩家不必陪跑几十回合：本机人类可在「别人的回合」或「自己回合的掷骰前」认输
+ * （决策弹窗中途不允许，避免购地/清算流程里状态被抽走）。按破产处理：资产归还银行、现金清零、排名垫底。
+ * 场上再无人类 → 作废进行中的 AI 回合并立即结算；仍有其他人类（同屏/联机）→ 对局继续。 */
+function canResign(p) {
+  if (!G.started || G.over || !p || !p.alive || p.ai) return false;
+  if (NET.active && NET.isRemoteSeat(p.idx)) return false;   // 联机客人认输需经房主权威，暂不开放
+  if (G.players[G.cur] !== p) return true;
+  return typeof ui.rollPending === 'function' ? !!ui.rollPending() : false;
+}
+async function resign(p) {
+  if (!canResign(p)) return false;
+  const wasMyTurn = G.players[G.cur] === p;
+  const lastHuman = !G.players.some(q => !q.ai && q.alive && q !== p);
+  p.alive = false;
+  p.money = 0;
+  if (G.stats) G.stats[p.idx].resigned = 1;
+  releaseAssets(p);
+  ui.removeToken(p);
+  if (lastHuman) { G.gameId++; ui.abortTransient(); }   // 作废所有进行中的异步流程（含自己挂起的掷骰等待）
+  ui.updatePlayers();
+  ui.updateTileAll();
+  SFX.lose();
+  ui.toast(`🏳️ ${pname(p)} 认输离场`, '🏳️');
+  ui.news(`🏳️ ${pname(p)} 宣布认输，退出本局！`);
+  ui.log(`🏳️ <b style="color:${playerColor(p)}">${pname(p)}</b> 认输离场`, 'bad');
+  if (lastHuman) { endGame(); return true; }   // endGame 内部 await 结算弹窗直到玩家点按钮，这里不阻塞调用方
+  if (wasMyTurn) ui.cancelRollFor(p);   // 释放掷骰等待 → playTurn 返回 → advanceTurn 轮到下一位
+  return true;
 }
 
 /* ---------- 人类/AI 决策包装 ---------- */
