@@ -15,6 +15,7 @@ const ui = (() => {
   let diceRot = { x: 0, y: 0 };
   let modalOpen = 0;
   let confettiTimer = null;
+  let shopOpen = null;         // 当前打开的道具商店弹窗 { m, resClose, refresh }（同一时刻最多一个）
 
   /* ================= 界面补充样式（head 注入，不依赖 index.html 改动） ================= */
   let _uixStyleDone = false;
@@ -40,6 +41,12 @@ const ui = (() => {
 .cash-flow .cf-ok { color: #3ddc84; }
 .cash-flow .cf-bad { color: #ff6b6b; }
 .cash-flow .cf-warn { color: #ff6b6b; font-weight: 800; font-size: 12px; }
+/* 玩家面板：净资产（回合上限模式的胜负线）+ 领跑者皇冠 */
+.pc-worth { margin-left: auto; font-size: 11px; color: #9fc4a8; white-space: nowrap; letter-spacing: .3px; }
+.pc-worth.lead { color: #ffd76a; font-weight: 800; }
+/* 认输按钮（重开菜单内） */
+.btn.btn-resign { background: rgba(255,107,107,.12); color: #ffb3b3; border: 1px solid rgba(255,107,107,.4); }
+.btn.btn-resign[disabled] { opacity: .45; cursor: not-allowed; }
 `;
       document.head.appendChild(st);
     } catch (e) { /* 无 head 环境（桩测试）忽略 */ }
@@ -401,21 +408,28 @@ const ui = (() => {
     const btn = $('#btn-roll');
     const status = $('#center-status');
     if (phase === 'preroll') {
-      const human = player && !player.ai;
+      const human = !!(player && !player.ai);
+      /* 联机：不是本机掌控的人类座位（房主看客人 / 客人看别人）→ 按钮只作「等待 XX 掷骰」提示、不可点。
+       * 此前房主端按钮在客人回合可点 → 房主能替客人掷骰；客人端在所有人类回合都亮着。 */
+      let remote = false;
+      if (human && NET.active) remote = NET.isHost ? NET.isRemoteSeat(player.idx) : (player.idx !== NET.mySeat);
       btn.classList.toggle('show', human);
-      btn.disabled = false;
-      btn.querySelector('span').textContent = '掷 骰 子';
-      if (human) {
+      btn.disabled = remote;
+      btn.classList.toggle('waiting-remote', remote);
+      btn.querySelector('span').textContent = remote ? `等待 ${pname(player)} 掷骰…` : '掷 骰 子';
+      if (human && !remote) {
         status.innerHTML = `<span style="color:${playerColor(player)}">${pname(player)}</span>，轮到你了！可先用道具`;
         splash(`<img class="sp-ava" src="${charOf(player).avatarImg}" alt=""> 轮到 <span style="color:${playerColor(player)}">${pname(player)}</span> 出手！`);
+      } else if (human) {
+        status.innerHTML = `等待 <span style="color:${playerColor(player)}">${pname(player)}</span> 掷骰<span class="dots"><i>.</i><i>.</i><i>.</i></span>`;
       } else {
         status.innerHTML = `<span style="color:${playerColor(player)}">${pname(player)}</span> 思考中<span class="dots"><i>.</i><i>.</i><i>.</i></span>`;
       }
     } else if (phase === 'rolling') {
-      btn.classList.remove('show');
+      btn.classList.remove('show', 'waiting-remote');
       if (player) status.innerHTML = `<span style="color:${playerColor(player)}">${pname(player)}</span> 行动中<span class="dots"><i>.</i><i>.</i><i>.</i></span>`;
     } else {
-      btn.classList.remove('show');
+      btn.classList.remove('show', 'waiting-remote');
     }
     refreshPropChips();
   }
@@ -427,9 +441,15 @@ const ui = (() => {
     G.players.forEach(p => {
       const c = charOf(p);
       const el = document.createElement('div');
+      /* 身份角标：AI / 你 / 其他人类（联机客人、同屏玩家）显示其名号，不再人人都是「你」；
+       * 同屏多人没有唯一的「我」——「▼ 你」飘带不显示（角标 玩家1/玩家2 已足够区分） */
+      const hotseat = !NET.active && G.players.filter(q => !q.ai).length > 1;
       const isMe = NET.active
         ? (NET.isHost ? p.idx === 0 : p.idx === NET.mySeat)
-        : !p.ai;
+        : (!p.ai && !hotseat);
+      const tag = p.ai ? '<i class="pc-ai">AI</i>'
+        : hotseat ? `<i class="pc-you">${p.name || ('玩家' + (p.idx + 1))}</i>`
+        : (isMe ? '<i class="pc-you">你</i>' : `<i class="pc-you">${p.name || '玩家'}</i>`);
       el.className = 'pcard' + (p.alive ? '' : ' dead') + (isMe ? ' me' : '');
       el.dataset.idx = p.idx;
       el.style.setProperty('--pc', c.color);
@@ -437,13 +457,14 @@ const ui = (() => {
         <div class="pc-top">
           <div class="pc-avatar"><img src="${c.avatarImg}" alt="${c.name}" draggable="false"></div>
           <div class="pc-info">
-            <div class="pc-name">${c.name}${p.ai ? '<i class="pc-ai">AI</i>' : '<i class="pc-you">你</i>'}</div>
+            <div class="pc-name">${c.name}${tag}</div>
             <div class="pc-cash" data-cash>${fmt(p.money)}</div>
           </div>
           <div class="pc-badges"></div>
         </div>
         <div class="pc-props"></div>
-        <div class="pc-lands"><span class="pc-lands-count" data-lands>0</span> 处产业<span class="pc-dots" data-dots></span></div>`;
+        <div class="pc-lands"><span class="pc-lands-count" data-lands>0</span> 处产业<span class="pc-dots" data-dots></span>
+          <span class="pc-worth" data-worth title="净资产 = 现金 + 地产市值（含建筑）+ 道具半价；回合上限模式按此排名">资产 $0</span></div>`;
       wrap.appendChild(el);
     });
     updatePlayers();
@@ -464,9 +485,20 @@ const ui = (() => {
     })(t0);
   }
   function updatePlayers() {
+    /* 净资产领跑者（存活者中最高）：回合上限模式的真实胜负线，此前面板只显示现金 + 产业数，领先者不可见 */
+    let leadIdx = -1, leadWorth = -Infinity;
+    if (typeof netWorth === 'function') {
+      G.players.forEach(p => { if (p.alive) { const w = netWorth(p); if (w > leadWorth) { leadWorth = w; leadIdx = p.idx; } } });
+    }
     G.players.forEach(p => {
       const el = $(`.pcard[data-idx="${p.idx}"]`);
       if (!el) return;
+      const worthEl = $('[data-worth]', el);
+      if (worthEl && typeof netWorth === 'function') {
+        const isLead = p.alive && p.idx === leadIdx && alivePlayers().length > 1;
+        worthEl.textContent = (isLead ? '👑 ' : '') + '资产 ' + fmt(netWorth(p));
+        worthEl.classList.toggle('lead', isLead);
+      }
       const cashEl = $('[data-cash]', el);
       if (lastMoney[p.idx] !== undefined && lastMoney[p.idx] !== p.money && !p._skipTween) {
         tweenCash(cashEl, lastMoney[p.idx], p.money);
@@ -480,9 +512,9 @@ const ui = (() => {
         .map(x => `<i style="background:${GROUPS[x.t.group].color}" title="${x.t.name}"></i>`).join('');
       $('[data-dots]', el).innerHTML = dots;
       const badges = [];
-      if (!p.alive) badges.push('<span class="bd bd-dead">破产</span>');
+      if (!p.alive) badges.push('<span class="bd bd-dead">💀 破产</span>');
       else {
-        if (p.inJail) badges.push('<span class="bd bd-dead" title="羁押中：无法行动，交保释金 / 用出狱许可证 / 蹲满回合可出狱">羁押中</span>');
+        if (p.inJail) badges.push('<span class="bd bd-jail" title="羁押中：无法行动，交保释金 / 用出狱许可证 / 蹲满回合可出狱">⛓ 羁押中</span>');
         if (p.shield) badges.push('<span class="bd bd-glow" title="护身符生效">🧿</span>');
         if (p.forcedDice != null) badges.push('<span class="bd" title="遥控骰子已设定">🔮</span>');
         if (p.bailCards > 0) badges.push(`<span class="bd" title="出狱许可证×${p.bailCards}">🎫${p.bailCards}</span>`);
@@ -498,17 +530,31 @@ const ui = (() => {
       if (!p.alive) { pr.innerHTML = ''; return; }
       const chips = Object.keys(PROPS).map(k => {
         const n = p.props[k] || 0;
-        const usable = !p.ai && p.alive && phaseAllowsProps() && isMyPreRoll(p)
+        /* 联机客人端只能点自己座位的道具（此前所有人类座位的道具在客人端都亮着，点了也被房主丢弃，纯误导） */
+        const mineOnGuest = !window.__netGuest || (NET.active && p.idx === NET.mySeat);
+        const usable = !p.ai && p.alive && phaseAllowsProps() && isMyPreRoll(p) && mineOnGuest
           && (!window.__seatCheck || window.__seatCheck(p));
         return n > 0 ? `<button class="pchip" data-prop="${k}" ${usable ? '' : 'disabled'} title="${PROPS[k].name}：${PROPS[k].desc}">${PROPS[k].icon}<b>${n}</b></button>` : '';
       }).join('');
       pr.innerHTML = chips || '<span class="pc-noprop">暂无道具 · 踩「道具商店」可购买</span>';
     });
+    if (shopOpen && shopOpen.refresh) { try { shopOpen.refresh(); } catch (e) { /* ignore */ } }
   }
 
   function phaseAllowsProps() { return $('#btn-roll').classList.contains('show'); }
   function isMyPreRoll(p) { return G.players[G.cur] === p; }
   function refreshPropChips() { updatePlayers(); }
+
+  /* 需要选格的道具的合法目标判定（本地点选 / 房主校验客人上报的格号 共用同一套规则） */
+  function propTargetFilter(key, p) {
+    if (key === 'block') return i => G.blocks[i] == null && BOARD[i].type !== 'start' && BOARD[i].type !== 'jail'
+      && !G.players.some(q => q && q.alive && q.pos === i);   /* 有人站立的格不放（审计 P0：路障压角色） */
+    if (key === 'demo') return i => {
+      const st = G.tiles[i];
+      return BOARD[i].type === 'prop' && st.owner != null && st.owner !== p.idx && st.level > 0;
+    };
+    return null;
+  }
 
   /* 道具点击（事件委托） */
   document.addEventListener('click', async (e) => {
@@ -518,23 +564,27 @@ const ui = (() => {
     const p = G.players[idx];
     const key = chip.dataset.prop;
     SFX.click();
-    if (window.__netGuest) { NET.toHost({ t: 'prop', key, idx: p.idx }); return; }
+    if (window.__netGuest) {
+      /* 联机客人：选格类道具先在本地棋盘点选目标，再把格号上报房主校验执行 */
+      const f = propTargetFilter(key, p);
+      if (f) {
+        const t = await pickTile(f);
+        if (t == null) return;
+        NET.toHost({ t: 'prop', key, idx: p.idx, arg: t });
+      } else {
+        NET.toHost({ t: 'prop', key, idx: p.idx });
+      }
+      return;
+    }
     const gid = G.gameId;
     if (key === 'dice') {
       const v = await numberPicker();
       if (v == null || gid !== G.gameId) return;
       await useProp(gid, p, 'dice', v);
-    } else if (key === 'block') {
-      const t = await pickTile(i => G.blocks[i] == null && BOARD[i].type !== 'start' && BOARD[i].type !== 'jail');
+    } else if (key === 'block' || key === 'demo') {
+      const t = await pickTile(propTargetFilter(key, p));
       if (t == null || gid !== G.gameId) return;
-      await useProp(gid, p, 'block', t);
-    } else if (key === 'demo') {
-      const t = await pickTile(i => {
-        const st = G.tiles[i];
-        return BOARD[i].type === 'prop' && st.owner != null && st.owner !== p.idx && st.level > 0;
-      });
-      if (t == null || gid !== G.gameId) return;
-      await useProp(gid, p, 'demo', t);
+      await useProp(gid, p, key, t);
     } else {
       await useProp(gid, p, key);
     }
@@ -582,6 +632,8 @@ const ui = (() => {
   function waitRoll() {
     return new Promise(res => { rollResolver = res; });
   }
+  /* 是否正在等待人类掷骰（game.js canResign 用：只有这个窗口 + 别人的回合允许认输） */
+  function rollPending() { return !!rollResolver; }
   function cancelRollFor(p) {
     if (rollResolver && G.players[G.cur] === p) {
       const r = rollResolver; rollResolver = null;
@@ -596,6 +648,16 @@ const ui = (() => {
       SFX.click();
       r(1 + rnd(6));
     }
+  }
+  /* 房主代远程座位掷骰（客人发来 roll 指令）：不受本机按钮 disabled 状态限制，但只在轮到该座位且正等待掷骰时生效 */
+  function fireRemoteRoll(seat) {
+    if (!rollResolver || !G.players[G.cur] || G.players[G.cur].idx !== seat) return false;
+    const r = rollResolver; rollResolver = null;
+    const btn = $('#btn-roll');
+    btn.disabled = true; btn.classList.remove('show', 'waiting-remote');
+    SFX.click();
+    r(1 + rnd(6));
+    return true;
   }
 
   /* ================= 飘字 / 提示 ================= */
@@ -636,14 +698,75 @@ const ui = (() => {
     setTimeout(() => { d.classList.add('out'); setTimeout(() => d.remove(), 350); }, 2300);
   }
 
-  let newsTimer = null;
-  function news(text) {
-    const bar = $('#ticker');
+  /* ================= 全局播报条（HUD 下方；队列轮播，超长文案自动横向滚动） =================
+   * game.js 的 pickSeason / 里程碑 / 拍卖 / 破产等全局事件经 ui.news() 进入队列，逐条淡入停留淡出；
+   * 队列排空后最后一条常驻（本期事件因此整回合可见）。toast 保持原样不受影响。 */
+  const NT = { q: [], busy: false, timer: null, seq: 0 };
+  const NT_MAX_Q = 6;
+  function ntRoot() { return document.getElementById('news-ticker'); }
+  function ntRenderQueue() {
+    const q = document.getElementById('nt-q');
+    if (!q) return;
+    q.innerHTML = NT.q.map(() => '<i class="on"></i>').join('');
+  }
+  function ntShow(text) {
+    const bar = ntRoot();
     if (!bar) return;
-    bar.innerHTML = `<span class="tk">📣 ${text}</span>`;
-    bar.classList.add('show');
-    clearTimeout(newsTimer);
-    newsTimer = setTimeout(() => bar.classList.remove('show'), 4200);
+    const view = bar.querySelector('.nt-view');
+    const old = bar.querySelector('.nt-msg');
+    const mySeq = ++NT.seq;
+    const swap = () => {
+      if (mySeq !== NT.seq) return;
+      const n = document.createElement('span');
+      n.className = 'nt-msg'; n.id = 'nt-msg';
+      n.innerHTML = text;
+      if (old && old.parentNode) old.replaceWith(n); else if (view) view.appendChild(n);
+      bar.classList.remove('idle');
+      bar.classList.add('flash');
+      setTimeout(() => bar.classList.remove('flash'), 650);
+      /* 超出可视宽度：横向匀速滚动到尾部再停留 */
+      let hold = 4200;
+      try {
+        const over = n.scrollWidth - (view ? view.clientWidth : 0);
+        if (view && over > 8) {
+          const dur = Math.max(2800, over * 26);
+          n.style.setProperty('--nt-dx', (-over - 10) + 'px');
+          n.style.setProperty('--nt-dur', dur + 'ms');
+          n.classList.add('scroll');
+          hold = dur + 2400;
+        }
+      } catch (e) { /* 无布局环境 */ }
+      clearTimeout(NT.timer);
+      NT.timer = setTimeout(ntNext, hold);
+    };
+    if (old && !bar.classList.contains('idle')) {
+      old.classList.add('out');
+      setTimeout(swap, 240);
+    } else swap();
+  }
+  function ntNext() {
+    if (!NT.q.length) { NT.busy = false; ntRenderQueue(); return; }
+    NT.busy = true;
+    const text = NT.q.shift();
+    ntRenderQueue();
+    ntShow(text);
+  }
+  function ntReset() {
+    NT.q.length = 0; NT.busy = false; NT.seq++;
+    clearTimeout(NT.timer); NT.timer = null;
+    const bar = ntRoot();
+    if (!bar) return;
+    bar.classList.add('idle'); bar.classList.remove('flash');
+    const view = bar.querySelector('.nt-view');
+    if (view) view.innerHTML = '<span class="nt-msg" id="nt-msg">富贵人生 · 掷骰买地，坐地收租</span>';
+    ntRenderQueue();
+  }
+  function news(text) {
+    if (!ntRoot()) return;
+    NT.q.push(String(text == null ? '' : text));
+    while (NT.q.length > NT_MAX_Q) NT.q.shift();
+    ntRenderQueue();
+    if (!NT.busy) ntNext();
   }
 
   function splash(html) {
@@ -672,10 +795,11 @@ const ui = (() => {
     st.textContent = '.lb-tabs{display:flex;gap:8px;margin:10px 0}.lb-tab{flex:1;padding:9px 6px;border-radius:9px;border:1px solid rgba(240,180,41,.3);'
       + 'background:rgba(255,255,255,.05);color:#cfe0d2;font:700 13px "Microsoft YaHei",sans-serif;cursor:pointer}'
       + '.lb-tab.on{background:linear-gradient(180deg,#ffd76a,#f0a429);color:#3a2600;border-color:transparent}'
-      + '.lb-row{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:9px;margin-bottom:6px;background:rgba(255,255,255,.045)}'
-      + '.lb-row.lb-head{background:rgba(240,180,41,.14);color:#ffe9a8;font-weight:800}'
-      + '.lb-row span:first-child{width:26px}.lb-row .lb-name{flex:1;font-weight:800;color:#eef7ee}'
-      + '.lb-row .lb-char{color:#8aa891;font-size:12px}.lb-row .lb-val{font-weight:900;color:#ffd76a}'
+      + '.lb-body{min-width:400px}'
+      + '.lb-row{display:grid;grid-template-columns:28px 1fr 64px 84px;align-items:center;gap:10px;padding:8px 12px;border-radius:9px;margin-bottom:6px;background:rgba(255,255,255,.045)}'
+      + '.lb-row.lb-head{background:rgba(240,180,41,.14);color:#ffe9a8;font-weight:800;font-size:12px;letter-spacing:1px}'
+      + '.lb-row .lb-rk{font-weight:900;text-align:center;font-size:14px}.lb-row .lb-name{font-weight:800;color:#eef7ee;min-width:0}'
+      + '.lb-row .lb-char{color:#8aa891;font-size:12px}.lb-row .lb-val{font-weight:900;color:#ffd76a;text-align:right;font-variant-numeric:tabular-nums}'
       + '.lb-rk.top1{color:#ffd76a}.lb-rk.top2{color:#cfd8e3}.lb-rk.top3{color:#e8a56b}';
     document.head.appendChild(st);
   }
@@ -713,7 +837,10 @@ const ui = (() => {
   /* 抽卡全屏过场（26 卡主题） */
   function showCard(card, kind, player) {
     return new Promise(res => {
-      const isAI = player.ai;
+      /* 自动收起：AI 的卡；以及房主端看到的「联机客人」的卡——客人在自己屏幕确认，房主不该替他按确认才放行整桌
+       * （此前 player.ai=false 的远程座位让房主必须逐张点掉客人的卡，否则回合流卡住） */
+      const remoteHuman = !player.ai && NET.active && NET.isHost && player.idx != null && NET.isRemoteSeat(player.idx);
+      const isAI = player.ai || remoteHuman;
       const cut = card.cut || { fx: 'pulse', bg: 'gold' };
       const label = kind === 'chance' ? '机 会 卡' : '命 运 快 报';
       let rain = '';
@@ -903,15 +1030,19 @@ const ui = (() => {
     });
   }
 
-  /* 格子点选模式（路障/拆迁令） */
+  /* 格子点选模式（路障/拆迁令）；pickHook 通知 3D 层高亮可选格（2D 格子在 v3d 模式下不可见） */
+  let pickHook = null;
   function pickTile(filter) {
     return new Promise(res => {
       picking = { filter, resolve: res };
+      const valid = [];
       $$('.tile').forEach(el => {
         const i = +el.dataset.idx;
-        if (filter(i)) el.classList.add('pickable');
+        if (filter(i)) { el.classList.add('pickable'); valid.push(i); }
       });
+      if (!valid.length) { for (let i = 0; i < BOARD.length; i++) if (filter(i)) valid.push(i); }   /* 无 DOM 格子（桩环境）时直接按规则枚举 */
       $('#pickbar').classList.add('show');
+      try { if (pickHook) pickHook(valid); } catch (e) { /* 3D 高亮失败不影响点选 */ }
     });
   }
   function endPick(val) {
@@ -920,6 +1051,7 @@ const ui = (() => {
     picking = null;
     $$('.tile').forEach(el => el.classList.remove('pickable'));
     $('#pickbar').classList.remove('show');
+    try { if (pickHook) pickHook(null); } catch (e) { /* ignore */ }
     resolve(val);
   }
   function onTileClick(i) {
@@ -948,7 +1080,9 @@ const ui = (() => {
       return `<table class="deed-rent"><tr><th>拥有车站</th><th>租金</th></tr>${CFG.STATION_RENT.map((r, i) => `<tr><td>${i + 1} 座</td><td>${fmt(r)}</td></tr>`).join('')}</table>`;
     }
     if (t.type === 'utility') {
-      return `<table class="deed-rent"><tr><th>拥有公司</th><th>租金</th></tr><tr><td>1 家</td><td>骰子点数 × $4,000</td></tr><tr><td>2 家</td><td>骰子点数 × $10,000</td></tr></table>`;
+      /* 与 data.js rentOf 共用 CFG.UTILITY_RENT：此前写死 ×$4,000/×$10,000，数值调配（×1,200/×3,000）后地契文案已失真 3 倍 */
+      const UR = CFG.UTILITY_RENT || [1200, 3000];
+      return `<table class="deed-rent"><tr><th>拥有公司</th><th>租金</th></tr><tr><td>1 家</td><td>骰子点数 × ${fmt(UR[0])}</td></tr><tr><td>2 家</td><td>骰子点数 × ${fmt(UR[1])}</td></tr></table>`;
     }
     return '';
   }
@@ -988,35 +1122,53 @@ const ui = (() => {
     m.el.addEventListener('click', (e) => { if (e.target === m.el) m.close(); });
   }
 
-  /* 道具商店 */
+  /* 道具商店
+   * 同一时刻最多一个商店弹窗：联机客人每买一件，房主会再发一次 shop 询问 → 此前客人端每次都新开一层弹窗叠在旧弹窗上，
+   * 且旧弹窗上显示的现金/持有数是询问时的快照（客人传来的是 G.players 的拷贝）。现在：新询问接管旧弹窗（旧 Promise 安全
+   * resolve，其 close 回执在房主侧对应的请求早已完成、被忽略），现金/持有数从 G.players 实时读取并随 updatePlayers 刷新。 */
   function shopModal(p, buyFn) {
     return new Promise(resClose => {
+      if (shopOpen) { const prev = shopOpen; shopOpen = null; try { prev.m.close(); } catch (e) { /* ignore */ } prev.resClose(); }
+      const live = () => (G.players && p && p.idx != null && G.players[p.idx] && G.players[p.idx].charId === p.charId) ? G.players[p.idx] : p;
+      const canBuy = (lp, k) => lp.money >= PROPS[k].price && ((lp.props && lp.props[k]) || 0) < PROP_MAX;
       const render = () => {
+        const lp = live();
         const items = Object.keys(PROPS).map(k => {
           const P = PROPS[k];
-          const owned = p.props[k] || 0;
-          const can = p.money >= P.price && owned < PROP_MAX;
+          const owned = (lp.props && lp.props[k]) || 0;
           return `<div class="shop-item">
             <span class="si-ico">${P.icon}</span>
             <div class="si-info"><b>${P.name}</b><small>${P.desc}</small></div>
-            <div class="si-own">持有 ${owned}/${PROP_MAX}</div>
-            <button class="btn btn-mini btn-primary" data-buy="${k}" ${can ? '' : 'disabled'}>${fmt(P.price)}</button>
+            <div class="si-own" data-own="${k}">持有 ${owned}/${PROP_MAX}</div>
+            <button class="btn btn-mini btn-primary" data-buy="${k}" ${canBuy(lp, k) ? '' : 'disabled'}>${fmt(P.price)}</button>
           </div>`;
         }).join('');
         return `<div class="m-title">🛒 道具商店</div>
-          <div class="m-cash">你的现金：<b>${fmt(p.money)}</b></div>
+          <div class="m-cash">你的现金：<b data-shop-cash>${fmt(lp.money)}</b></div>
           <div class="shop-list">${items}</div>
           <div class="m-actions center"><button class="btn btn-ghost" id="shop-close">离开商店</button></div>`;
       };
       const m = buildModal(render(), 'shop');
+      const me = { m, resClose, refresh: null };
+      shopOpen = me;
+      const close = () => { if (shopOpen === me) shopOpen = null; m.close(); resClose(); };
       const bind = () => {
         $$('[data-buy]', m.el).forEach(b => b.onclick = async () => {
           b.disabled = true;
           const ok = await buyFn(b.dataset.buy);
-          if (ok) { $('.modal .m-cash b', m.el).textContent = fmt(p.money); const nr = render(); $('.modal', m.el).innerHTML = nr; bind(); }
+          if (shopOpen !== me) return;                       // 期间已被新询问接管 / 关闭
+          if (ok) { $('.modal', m.el).innerHTML = render(); bind(); }
           else b.disabled = false;
         });
-        $('#shop-close', m.el).onclick = () => { m.close(); resClose(); };
+        $('#shop-close', m.el).onclick = close;
+      };
+      /* 轻量刷新：只改文本与 disabled，不重建 DOM（updatePlayers 调用极频繁，重建会让正要点击的按钮从鼠标下消失） */
+      me.refresh = () => {
+        if (shopOpen !== me || !m.el) return;
+        const lp = live();
+        const c = $('[data-shop-cash]', m.el); if (c) c.textContent = fmt(lp.money);
+        $$('[data-buy]', m.el).forEach(b => { b.disabled = !canBuy(lp, b.dataset.buy); });
+        $$('[data-own]', m.el).forEach(d => { d.textContent = `持有 ${(lp.props && lp.props[d.dataset.own]) || 0}/${PROP_MAX}`; });
       };
       bind();
     });
@@ -1037,67 +1189,104 @@ const ui = (() => {
     st.id = 'ah-style';
     st.textContent = `
 #auction-hall{position:fixed;inset:0;z-index:900;display:flex;align-items:center;justify-content:center;
-  background:radial-gradient(120% 90% at 50% 0%,#173a2a 0%,#0a1f14 58%,#051209 100%);animation:ahIn .45s ease}
+  background:
+    repeating-conic-gradient(rgba(255,255,255,.012) 0% 25%,transparent 0% 50%) 0 0/6px 6px,
+    radial-gradient(120% 90% at 50% 0%,#164a33 0%,#0a2418 58%,#051209 100%);
+  animation:ahIn .45s ease}
 @keyframes ahIn{from{opacity:0}to{opacity:1}}
-.ah-wrap{width:min(1060px,94vw);max-height:94vh;display:flex;flex-direction:column;gap:12px;padding:18px 22px 20px;border-radius:18px;
-  background:linear-gradient(180deg,rgba(20,52,36,.94),rgba(9,28,18,.96));border:1px solid rgba(240,180,41,.4);
-  box-shadow:0 24px 70px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,236,180,.14)}
-.ah-head{display:flex;align-items:baseline;gap:12px;color:#ffe9a8}
-.ah-head b{font-size:20px;letter-spacing:2px}
-.ah-head small{color:#9fc4a8}
+.ah-wrap{position:relative;width:min(1060px,94vw);max-height:94vh;display:flex;flex-direction:column;gap:12px;padding:18px 22px 20px;border-radius:18px;
+  background:
+    radial-gradient(120% 60% at 50% 0%,rgba(255,215,106,.08),transparent 55%),
+    linear-gradient(180deg,rgba(18,50,36,.96),rgba(8,26,18,.98));
+  box-shadow:inset 0 0 0 1px rgba(255,215,106,.34),inset 0 0 0 3px rgba(0,0,0,.22),inset 0 0 0 4px rgba(255,215,106,.1),0 30px 80px rgba(0,0,0,.6)}
+.ah-wrap::before{content:'◆';position:absolute;left:50%;top:5px;transform:translateX(-50%);font-size:7px;color:rgba(255,215,106,.75);line-height:1}
+.ah-head{display:flex;align-items:center;gap:12px;color:#ffe9a8;padding-bottom:10px;border-bottom:1px solid rgba(255,215,106,.16)}
+.ah-head b{font-size:20px;letter-spacing:3px;font-weight:900;display:inline-flex;align-items:center;gap:8px}
+.ah-head b::before{content:'';width:4px;height:18px;border-radius:2px;background:linear-gradient(180deg,#ffd76a,#f0a818);box-shadow:0 0 8px rgba(255,215,106,.5)}
+.ah-head small{color:#9fc4a8;font-size:13px;letter-spacing:1px}
+.ah-step{margin-left:auto;font-size:12px;color:#9fb59c;background:rgba(0,0,0,.3);padding:5px 12px;border-radius:999px;box-shadow:inset 0 0 0 1px rgba(255,215,106,.22)}
+.ah-step b{color:#ffd76a;font-size:13px}
 .ah-stage{position:relative;display:flex;align-items:stretch;gap:14px}
-.ah-screen{flex:1;border-radius:14px;padding:18px 24px 16px;position:relative;overflow:hidden;
-  background:linear-gradient(160deg,#122b3f 0%,#0c1d2e 70%);border:2px solid rgba(240,180,41,.5);
-  box-shadow:0 10px 30px rgba(0,0,0,.45),inset 0 0 44px rgba(64,148,255,.12)}
+.ah-screen{flex:1;border-radius:14px;padding:16px 22px 14px;position:relative;overflow:hidden;
+  background:
+    radial-gradient(80% 90% at 50% 100%,rgba(255,215,106,.07),transparent 60%),
+    linear-gradient(160deg,#0f2d20 0%,#08201a 70%);
+  box-shadow:inset 0 0 0 1px rgba(255,215,106,.45),inset 0 0 0 3px rgba(0,0,0,.3),inset 0 0 0 4px rgba(255,215,106,.12),inset 0 0 50px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.45)}
 .ah-screen::after{content:'';position:absolute;inset:0;pointer-events:none;
-  background:repeating-linear-gradient(0deg,rgba(255,255,255,.028) 0 2px,transparent 2px 4px)}
-.ahs-tag{display:inline-block;font:700 12px/1 "Microsoft YaHei",sans-serif;letter-spacing:3px;color:#0a1f14;
-  background:linear-gradient(180deg,#ffe9a8,#f0b429);padding:5px 12px;border-radius:999px;margin-bottom:10px}
+  background:repeating-linear-gradient(0deg,rgba(255,255,255,.02) 0 2px,transparent 2px 4px)}
+.ahs-tag{display:inline-flex;align-items:center;gap:6px;font:800 11.5px/1 "Microsoft YaHei",sans-serif;letter-spacing:3px;color:#fff5ea;
+  background:linear-gradient(180deg,#d9433a,#a8231f);padding:5px 12px 5px 10px;border-radius:999px;margin-bottom:10px;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.16),0 2px 6px rgba(0,0,0,.4)}
+.ahs-tag::before{content:'';width:6px;height:6px;border-radius:50%;background:#fff;box-shadow:0 0 6px #fff;animation:ahDot 1.2s ease-in-out infinite}
+@keyframes ahDot{50%{opacity:.35;transform:scale(.75)}}
 .ahs-lot{display:flex;align-items:center;gap:20px;flex-wrap:wrap}
-.ahs-name{font-size:30px;font-weight:900;color:#fff2cf;letter-spacing:1px;text-shadow:0 2px 8px rgba(0,0,0,.5)}
-.ahs-owner{font-size:13px;font-weight:600;color:#8fb8c9;display:block;margin-top:4px;letter-spacing:1px}
-.ahs-price{margin-left:auto;text-align:right}
-.ahs-price b{display:block;font-size:34px;color:#ffd76a;text-shadow:0 0 18px rgba(255,180,41,.45)}
-.ahs-price small{color:#7d9a86;font-size:12px;letter-spacing:2px}
-.ahs-leader{font-size:14px;font-weight:700;color:#9fe0b2;min-width:120px;text-align:right}
-.ahs-meta{width:100%;color:#7d9a86;font-size:12.5px;letter-spacing:.5px}
-.ah-host{width:130px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:6px}
+.ahs-name{font-size:30px;font-weight:900;color:#fff2cf;letter-spacing:2px;text-shadow:0 2px 8px rgba(0,0,0,.5)}
+.ahs-owner{font-size:13px;font-weight:600;color:#9fc4a8;display:block;margin-top:4px;letter-spacing:1px}
+/* 当前价金镜 */
+.ahs-price{margin-left:auto;text-align:center;padding:9px 24px 8px;border-radius:14px;
+  background:radial-gradient(circle at 50% 20%,rgba(255,215,106,.2),rgba(0,0,0,.45) 75%);
+  box-shadow:inset 0 0 0 2px #d9960f,inset 0 0 0 4px rgba(0,0,0,.45),inset 0 0 0 5px rgba(255,215,106,.45),0 0 26px rgba(255,198,58,.22),0 8px 20px rgba(0,0,0,.45)}
+.ahs-price b{display:block;font-size:34px;color:#ffd76a;text-shadow:0 0 18px rgba(255,180,41,.5),0 2px 0 #6b4210;font-variant-numeric:tabular-nums;line-height:1.15}
+.ahs-price small{color:#b9a56a;font-size:11px;letter-spacing:2px}
+.ahs-leader{font-size:14px;font-weight:800;color:#9fe0b2;min-width:120px;text-align:right}
+.ahs-meta{width:100%;color:#7d9a86;font-size:12px;letter-spacing:.5px;margin-top:8px;padding-top:8px;border-top:1px dashed rgba(255,215,106,.16)}
+.ah-host{width:130px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:6px;padding:10px 0;border-radius:14px;
+  background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(0,0,0,.22));box-shadow:inset 0 0 0 1px rgba(255,215,106,.18)}
 .ah-host-fig{font-size:52px;line-height:1;filter:drop-shadow(0 6px 10px rgba(0,0,0,.5))}
-.ah-host-name{font-size:12px;color:#9fc4a8;letter-spacing:2px}
-.ah-hammer{font-size:34px;transform-origin:80% 80%;transform:rotate(-18deg);transition:transform .12s ease-in}
+.ah-host-name{font-size:11px;color:#9fc4a8;letter-spacing:3px;padding-left:3px}
+.ah-hammer{font-size:34px;transform-origin:80% 80%;transform:rotate(-18deg);transition:transform .12s ease-in;filter:drop-shadow(0 4px 6px rgba(0,0,0,.5))}
 .ah-hammer.slam{animation:ahSlam .55s ease-in}
 @keyframes ahSlam{0%{transform:rotate(-18deg)}55%{transform:rotate(38deg) translateY(10px) scale(1.12)}72%{transform:rotate(30deg)}100%{transform:rotate(-18deg)}}
 .ah-stage.shake{animation:ahShake .4s ease}
+.ah-stage.shake .ahs-price{box-shadow:inset 0 0 0 2px #ffe08a,inset 0 0 0 4px rgba(0,0,0,.45),inset 0 0 0 5px rgba(255,215,106,.7),0 0 44px rgba(255,198,58,.55),0 8px 20px rgba(0,0,0,.45)}
 @keyframes ahShake{0%,100%{transform:translate(0,0)}25%{transform:translate(-4px,2px)}55%{transform:translate(4px,-2px)}80%{transform:translate(-2px,1px)}}
 .ah-floor{display:flex;gap:14px;min-height:230px}
-.ah-seats{flex:1.55;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;align-content:start}
+.ah-seats{flex:1.55;display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:10px;align-content:start}
 .ah-seat{position:relative;display:flex;flex-direction:column;align-items:center;gap:5px;padding:12px 8px 10px;border-radius:12px;
-  background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.09);transition:opacity .3s,transform .25s,border-color .3s}
-.ah-seat img{width:46px;height:46px;border-radius:50%;object-fit:cover;border:2px solid var(--pc,#f0b429);background:#0a1f14}
+  background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(0,0,0,.22));box-shadow:inset 0 0 0 1px rgba(255,255,255,.1);
+  transition:opacity .3s,transform .25s,box-shadow .3s}
+.ah-seat img{width:50px;height:50px;border-radius:13px;object-fit:contain;object-position:bottom;
+  background:linear-gradient(165deg,color-mix(in srgb,var(--pc,#f0b429) 42%,#0a1a12),color-mix(in srgb,var(--pc,#f0b429) 16%,#06120c));
+  box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.22),0 0 0 2px color-mix(in srgb,var(--pc,#f0b429) 55%,transparent),0 4px 10px rgba(0,0,0,.45)}
 .ah-seat .n{font-size:13px;font-weight:800;color:#eef7ee}
-.ah-seat .m{font-size:12px;color:#9fc4a8}
+.ah-seat .m{font-size:12px;color:#8ff0b4;font-weight:700;font-variant-numeric:tabular-nums}
 .ah-seat .st{font-size:11.5px;color:#7d9a86;min-height:16px}
-.ah-seat .paddle{font-size:22px;opacity:.32;transform:rotate(-30deg) translateY(4px);transition:all .22s ease}
-.ah-seat.turn{border-color:rgba(240,180,41,.75);box-shadow:0 0 0 1px rgba(240,180,41,.5),0 0 22px rgba(240,180,41,.22);transform:translateY(-2px)}
-.ah-seat.turn .st{color:#ffd76a}
+.ah-seat .paddle{font-size:22px;opacity:.28;transform:rotate(-30deg) translateY(4px);transition:all .22s ease;filter:drop-shadow(0 2px 3px rgba(0,0,0,.5))}
+.ah-seat.turn{box-shadow:inset 0 0 0 1px rgba(255,215,106,.9),0 0 22px rgba(240,180,41,.28);transform:translateY(-2px);animation:ahTurn 1.4s ease-in-out infinite}
+@keyframes ahTurn{50%{box-shadow:inset 0 0 0 1px rgba(255,232,160,1),0 0 30px rgba(240,180,41,.45)}}
+.ah-seat.turn .st{color:#ffd76a;font-weight:800}
 .ah-seat.raise .paddle{opacity:1;transform:rotate(0) translateY(-8px) scale(1.18)}
-.ah-seat.lead{border-color:rgba(159,224,178,.65);background:rgba(159,224,178,.08)}
+.ah-seat.lead{box-shadow:inset 0 0 0 1px rgba(95,211,138,.8);background:linear-gradient(180deg,rgba(95,211,138,.12),rgba(0,0,0,.22))}
+.ah-seat.lead .st{color:#8ff0b4;font-weight:800}
+.ah-seat.lead::before{content:'领先';position:absolute;left:8px;top:8px;font:800 10px/1 "Microsoft YaHei",sans-serif;letter-spacing:1px;color:#0a1f14;
+  background:linear-gradient(180deg,#8ff0b4,#3ddc84);padding:3px 7px;border-radius:6px;box-shadow:0 1px 0 #1d9e50,0 2px 6px rgba(0,0,0,.4)}
 .ah-seat.out{opacity:.38;filter:grayscale(.9)}
-.ah-seat .bubble{position:absolute;top:-6px;right:-4px;background:linear-gradient(180deg,#ffe9a8,#f0b429);color:#3a2600;
-  font:800 12px/1 "Microsoft YaHei",sans-serif;padding:6px 9px;border-radius:999px;box-shadow:0 4px 12px rgba(0,0,0,.4);
+.ah-seat.won{box-shadow:inset 0 0 0 1.5px #ffd76a,0 0 0 2px rgba(255,215,106,.35),0 0 30px rgba(255,198,58,.45);background:linear-gradient(180deg,rgba(255,215,106,.18),rgba(0,0,0,.22));transform:translateY(-3px);animation:none}
+.ah-seat.won .st{color:#ffe08a;font-weight:900}
+.ah-seat.won::before{content:'竞得';background:linear-gradient(180deg,#ffe08a,#f0a818);color:#4a2f04;box-shadow:0 1px 0 #8a5a12,0 2px 6px rgba(0,0,0,.4)}
+.ah-seat .bubble{position:absolute;top:-8px;right:-4px;background:linear-gradient(180deg,#ffe9a8,#f0b429);color:#3a2600;
+  font:900 12.5px/1 "Microsoft YaHei",sans-serif;padding:6px 10px;border-radius:999px;box-shadow:0 2px 0 #8a5a12,0 4px 12px rgba(0,0,0,.4);
   animation:ahPop .3s ease}
 @keyframes ahPop{from{transform:scale(.4);opacity:0}to{transform:scale(1);opacity:1}}
 .ah-side{flex:1;display:flex;flex-direction:column;gap:10px;min-width:250px}
-.ah-feed{flex:1;overflow-y:auto;border-radius:12px;padding:10px 12px;background:rgba(0,0,0,.28);border:1px solid rgba(255,255,255,.08);
-  font-size:12.5px;color:#b9d4bf;line-height:1.9;max-height:170px}
+.ah-feed{flex:1;overflow-y:auto;border-radius:12px;padding:8px 12px 10px;background:rgba(0,0,0,.3);
+  box-shadow:inset 0 0 0 1px rgba(255,215,106,.16),inset 0 2px 8px rgba(0,0,0,.4);
+  font-size:12.5px;color:#b9d4bf;line-height:1.9;max-height:170px;scrollbar-width:thin;scrollbar-color:#2c5a45 transparent}
+.ah-feed::-webkit-scrollbar{width:6px}.ah-feed::-webkit-scrollbar-thumb{background:#2c5a45;border-radius:3px}
+.ah-feed::before{content:'竞 价 记 录';display:block;font-size:10.5px;letter-spacing:3px;color:#9fb59c;font-weight:800;border-bottom:1px dashed rgba(255,215,106,.16);margin-bottom:4px;padding-bottom:2px}
 .ah-feed b{color:#ffe9a8}
 .ah-actions{display:flex;flex-direction:column;gap:8px}
 .ah-turn{font-size:14px;font-weight:800;color:#ffd76a;letter-spacing:1px;min-height:20px}
-.ah-btn{padding:12px 14px;border:none;border-radius:11px;cursor:pointer;font:800 15px "Microsoft YaHei",sans-serif;letter-spacing:1px}
-.ah-btn.bid{background:linear-gradient(180deg,#ffd76a,#f0a429);color:#3a2600;box-shadow:0 6px 18px rgba(240,168,24,.4)}
-.ah-btn.bid:hover{filter:brightness(1.07)}
-.ah-btn.quit{background:rgba(255,255,255,.08);color:#b9d4bf;border:1px solid rgba(255,255,255,.16)}
-.ah-btn[disabled]{opacity:.4;cursor:not-allowed;filter:grayscale(.5)}
+.ah-btn{padding:12px 14px;border:none;border-radius:11px;cursor:pointer;font:800 15px "Microsoft YaHei",sans-serif;letter-spacing:1px;transition:transform .12s,box-shadow .12s,filter .12s}
+.ah-btn.bid{background:linear-gradient(180deg,#fff0bd 0%,#ffd76a 26%,#f0a818 62%,#d98a0c 100%);color:#4a2f04;
+  box-shadow:0 4px 0 #8a5a12,0 9px 20px rgba(240,168,24,.35),inset 0 1px 0 rgba(255,255,255,.85);text-shadow:0 1px 0 rgba(255,255,255,.5)}
+.ah-btn.bid:hover{filter:brightness(1.06);transform:translateY(-1px)}
+.ah-btn.bid:active{transform:translateY(2px);box-shadow:0 2px 0 #8a5a12,inset 0 1px 0 rgba(255,255,255,.85)}
+.ah-btn.quit{background:linear-gradient(180deg,rgba(22,52,37,.94),rgba(9,26,18,.96));color:#e6dfc6;
+  box-shadow:inset 0 0 0 1px rgba(255,215,106,.34),0 3px 0 rgba(0,0,0,.38)}
+.ah-btn.quit:hover{color:#ffe9a8;box-shadow:inset 0 0 0 1px rgba(255,215,106,.75),0 3px 0 rgba(0,0,0,.38)}
+.ah-btn[disabled]{opacity:.4;cursor:not-allowed;filter:grayscale(.5);transform:none}
+#ah-rps{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:13px}
 .ah-closing{animation:ahOut .5s ease forwards}
 @keyframes ahOut{to{opacity:0;transform:scale(.97)}}
 @media (max-width:760px){.ah-floor{flex-direction:column}.ah-side{min-width:0}.ahs-name{font-size:22px}.ahs-price b{font-size:26px}}
@@ -1128,17 +1317,17 @@ const ui = (() => {
     el.innerHTML = `
       <div class="ah-wrap">
         <div class="ah-head"><b>🔨 富贵拍卖行</b><small>${t.name} · 竞价进行中</small>
-          <span style="margin-left:auto;font-size:12px;color:#7d9a86">加价阶梯 <b style="color:#ffd76a">${fmt(minStep)}</b></span></div>
+          <span class="ah-step">加价阶梯 <b>${fmt(minStep)}</b></span></div>
         <div class="ah-stage">
           <div class="ah-screen">
             <span class="ahs-tag">LOT ${String(idx).padStart(2, '0')} · 拍卖标的</span>
             <div class="ahs-lot">
               <div><div class="ahs-name">${t.name}</div>
                 <span class="ahs-owner">${seller != null ? `${pname(G.players[seller])} 的产业` : '无主资产'}${level ? ` · 含${LEVEL_NAMES[level] || '建筑'}` : ''} · 市值 ${fmt(market)}</span></div>
-              <div class="ahs-price"><b id="ahs-price">${fmt(bankPrice)}</b><small>当前最高价（底价 = 银行半价保底）</small></div>
+              <div class="ahs-price"><b id="ahs-price">${fmt(bankPrice)}</b><small>当前最高价</small></div>
               <div class="ahs-leader" id="ahs-leader">等待首拍…</div>
             </div>
-            <div class="ahs-meta">拍品编号 LOT-${String(idx).padStart(2, '0')} · 低于底价由银行直接回收 · 竞得款项归 ${seller != null ? pname(G.players[seller]) : '银行'} 所有</div>
+            <div class="ahs-meta">拍品编号 LOT-${String(idx).padStart(2, '0')} · 底价 = 银行半价保底 · 低于底价由银行直接回收 · 竞得款项归 ${seller != null ? pname(G.players[seller]) : '银行'} 所有</div>
           </div>
           <div class="ah-host"><div class="ah-host-fig">🎩</div><div class="ah-host-name">主持人</div><div class="ah-hammer" id="ah-hammer">🔨</div></div>
         </div>
@@ -1197,6 +1386,7 @@ const ui = (() => {
   function auctionBid(p, amount) {
     if (!AH.el) return;
     auctionScreen(amount, p.idx);
+    AH.seats.forEach(s => s.classList.remove('lead'));   /* 领先标记只挂在当前最高出价者身上 */
     const seat = AH.seats.get(p.idx);
     if (seat) {
       seat.classList.remove('turn');
@@ -1286,7 +1476,7 @@ const ui = (() => {
   }
 
   /* 大厅入口询问：是否参与竞拍（game.js 开厅后第一时间调用） */
-  function auctionJoinAsk({ idx, bankPrice }) {
+  function auctionJoinAsk({ idx, bankPrice, who }) {
     return new Promise(res => {
       if (!AH.el) { res('join'); return; }
       /* 厅被关闭（连拍开新厅 / 重开游戏）时安全 resolve，不让 game.js 悬空 */
@@ -1296,7 +1486,7 @@ const ui = (() => {
       const t = $('#ah-turn', AH.el);
       const bid = $('#ah-bid', AH.el);
       const quit = $('#ah-quit', AH.el);
-      if (t) t.textContent = '📣 拍卖开始，是否参与竞拍？';
+      if (t) t.textContent = who ? `📣 ${who}：是否参与竞拍？` : '📣 拍卖开始，是否参与竞拍？';
       if (bid) {
         bid.disabled = false;
         bid.textContent = '🔨 参与竞拍';
@@ -1381,7 +1571,7 @@ const ui = (() => {
       : `🎉 一锤定音：<b>${pname(G.players[winner])}</b> 以 <b>${fmt(price)}</b> 竞得拍品！`);
     if (winner != null) {
       const seat = AH.seats.get(winner);
-      if (seat) { const st = $('.st', seat); if (st) st.textContent = '🎉 竞得！'; }
+      if (seat) { seat.classList.remove('turn'); seat.classList.add('won'); const st = $('.st', seat); if (st) st.textContent = '🎉 竞得！'; }
     }
     /* 大厅停留片刻让玩家看到落槌，再淡出。
      * 定时器只关闭「自己这一届」的厅：连拍时新厅可能已开（AH.el !== hall），
@@ -1471,6 +1661,8 @@ const ui = (() => {
     try {
       const rs = loadRecords();
       ranking.forEach((p, i) => {
+        /* 只记录真人（本机 / 同屏 / 联机座位）：此前 AI 也入榜，3 个 AI 每局灌 3 条记录，胜场榜被「AI 富老板」霸榜 */
+        if (p.ai) return;
         const c = charOf(p);
         const name = p.name || c.name;
         const st = (G.stats && G.stats[p.idx]) || { rentGot: 0, jailed: 0 };
@@ -1483,6 +1675,7 @@ const ui = (() => {
         rec.jail += (st.jailed || 0);
         rec.bestNet = Math.max(rec.bestNet || 0, worth);
         rec.last = Date.now();
+        if (typeof CAREER !== 'undefined' && p.idx === CAREER.localSeat()) { const eq = CAREER.equipped(); rec.title = eq ? eq.id : ''; }
       });
       saveRecords(rs);
     } catch (e) { /* 排行榜失败不影响对局结算 */ }
@@ -1498,10 +1691,11 @@ const ui = (() => {
     const body = $('#lb-body', m.el);
     function render(key, label, val) {
       const top = rs.slice().sort((a, b) => val(b) - val(a)).slice(0, 10);
-      body.innerHTML = top.length ? ('<div class="lb-row lb-head"><span>#</span><span>名号</span><span>角色</span><span>' + label + '</span></div>' +
+      const show = v => key === 'rent' ? fmt(v) : String(v | 0);   /* 胜场 / 入狱次数不是金额 */
+      body.innerHTML = top.length ? ('<div class="lb-row lb-head"><span>#</span><span>名号</span><span>角色</span><span style="text-align:right">' + label + '</span></div>' +
         top.map((r, i) => `<div class="lb-row"><span class="lb-rk ${i < 3 ? 'top' + (i + 1) : ''}">${i + 1}</span>` +
-        `<span class="lb-name">${r.name}</span><span class="lb-char">${(CHARACTERS.find(c => c.id === r.charId) || {}).name || ''}</span>` +
-        `<span class="lb-val">${fmt(val(r))}</span></div>`).join('')) : '<div class="dim" style="padding:16px;text-align:center">还没有战绩，先赢一局！</div>';
+        `<span class="lb-name">${r.name}${(typeof CAREER !== 'undefined' && r.title && CAREER.byId(r.title)) ? CAREER.badgeHTML(CAREER.byId(r.title), { small: true }) : ''}</span><span class="lb-char">${(CHARACTERS.find(c => c.id === r.charId) || {}).name || ''}</span>` +
+        `<span class="lb-val">${show(val(r))}</span></div>`).join('')) : '<div class="dim" style="padding:16px;text-align:center">还没有战绩，先赢一局！</div>';
     }
     m.el.querySelectorAll('.lb-tab').forEach(b => b.onclick = () => {
       m.el.querySelectorAll('.lb-tab').forEach(x => x.classList.remove('on')); b.classList.add('on');
@@ -1511,30 +1705,144 @@ const ui = (() => {
     $('#lb-close', m.el).onclick = () => m.close();
   }
 
+  /* ================= 生涯称号（跨局档案，见 career.js / TITLES_DESIGN.md） ================= */
+  function careerUnlockHTML(list) {
+    if (!list || !list.length || typeof CAREER === 'undefined') return '';
+    /* 一次解锁很多时：稀有度最高的 4 个做大卡，其余收成一行小徽章，结算页不至于被撑爆 */
+    const MAX_CARDS = 4;
+    const cards = list.slice(0, MAX_CARDS).map((t, i) => {
+      const r = CAREER.RARITY[t.rarity] || CAREER.RARITY[1];
+      return `<div class="cr-unlock-card r${t.rarity}" style="animation-delay:${120 + i * 70}ms"><span class="cr-unlock-icon">${CAREER.titleSVG(t, 46)}</span><span class="cr-unlock-name">${CAREER.esc(t.name)}</span><span class="cr-unlock-desc">${CAREER.esc(t.desc || t.hint || '')}</span><span class="cr-unlock-rar" style="color:${r.color}">${r.name}</span></div>`;
+    }).join('');
+    const rest = list.length > MAX_CARDS ? `<div class="cr-unlock-more">还解锁了 ${list.slice(MAX_CARDS).map(t => CAREER.badgeHTML(t, { small: true })).join('')}</div>` : '';
+    return `<div class="cr-unlock"><div class="cr-unlock-title">🎖️ 新称号解锁</div><div class="cr-unlock-list">${cards}</div>${rest}<div class="cr-unlock-tip">可在主菜单「🎖️ 生涯称号」中查看进度与更换佩戴</div></div>`;
+  }
+  function refreshCareerBadge() {
+    if (typeof CAREER === 'undefined') return;
+    const el = document.getElementById('career-badge');
+    if (el) el.innerHTML = CAREER.equippedBadge({ small: true });
+    const btn = document.getElementById('btn-career');
+    if (btn) btn.textContent = `🎖️ 生涯称号 ${CAREER.unlockedCount()}/${CAREER.catalog().length}`;
+  }
+  function showCareer() {
+    if (typeof CAREER === 'undefined') return;
+    const p = CAREER.profile();
+    let nick = '';
+    try { nick = localStorage.getItem('df_nickname') || ''; } catch (e) { /* ignore */ }
+    nick = CAREER.esc(nick || '本机玩家');
+    const winRate = p.games ? Math.round(p.wins / p.games * 100) + '%' : '—';
+    const total = CAREER.catalog().length;
+    const m = buildModal(`
+      <div class="m-title big">🎖️ 生涯称号</div>
+      <div class="cr-head">
+        <div class="cr-who"><div class="cr-who-badge none" id="cr-who-badge">❔</div><div><div class="cr-nick">${nick}</div><div class="cr-eq" id="cr-eq"></div></div></div>
+        <div class="cr-stats">
+          <div class="cr-stat"><b>${p.games}</b><span>局数</span></div>
+          <div class="cr-stat"><b>${p.wins}</b><span>胜场</span></div>
+          <div class="cr-stat"><b>${winRate}</b><span>胜率</span></div>
+          <div class="cr-stat"><b>${CAREER.fmtNum(p.rentGot, true)}</b><span>累计收租</span></div>
+          <div class="cr-stat"><b>${p.jailed}</b><span>入狱</span></div>
+          <div class="cr-stat"><b>${CAREER.unlockedCount()}<small style="font-size:11px;color:#9fb59c">/${total}</small></b><span>称号</span></div>
+        </div>
+      </div>
+      <div class="lb-tabs cr-tabs"><button class="lb-tab on" data-t="tracks">阶梯称号</button><button class="lb-tab" data-t="special">特殊成就</button><button class="lb-tab" data-t="stats">生涯数据</button></div>
+      <div class="cr-body" id="cr-body"></div>
+      <div class="m-actions center"><button class="btn btn-ghost" id="cr-unequip">卸下称号</button><button class="btn btn-ghost" id="cr-close">关闭</button></div>`, 'nomax cr-modal');
+    const body = $('#cr-body', m.el);
+    let tab = 'tracks';
+    const chip = (t) => {
+      const got = CAREER.has(t.id), eq = p.equipped === t.id;
+      const ico = got ? CAREER.titleSVG(t, 18) : '<span class="lk">🔒</span>';
+      return `<span class="cr-chip r${t.rarity} ${got ? 'got' : 'lock'}${eq ? ' eq' : ''}" data-id="${t.id}" title="${CAREER.esc(t.desc || t.hint || '')}">${ico}${CAREER.esc(t.name)}${got ? '' : ` <i>${CAREER.fmtNum(t.need, t.money)}${t.unit || ''}</i>`}</span>`;
+    };
+    const renderTracks = () => CAREER.tracks().map(tr => {
+      const stt = CAREER.trackState(tr, p);
+      const icoT = stt.current || stt.tiers[0];
+      const ico = `<div class="cr-track-ico${stt.current ? '' : ' lock'}">${CAREER.titleSVG(icoT, 64)}</div>`;
+      const head = stt.current ? CAREER.badgeHTML(stt.current, { small: true }) : '<span class="dim">尚未解锁</span>';
+      const nextTxt = stt.next ? `下一阶「<b>${CAREER.esc(stt.next.name)}</b>」 ${CAREER.fmtNum(stt.prog.cur, tr.money)} / ${CAREER.fmtNum(stt.prog.need, tr.money)}${tr.unit || ''}` : '✨ 本轨道已登顶';
+      const pct = stt.next ? stt.prog.pct : 100;
+      return `<div class="cr-track">${ico}<div class="cr-track-head"><span class="cr-track-name">${tr.icon} ${tr.name} <span class="dim">${stt.reached}/${stt.total}</span></span>${head}</div>
+        <div><div class="cr-track-prog">${nextTxt}</div><div class="cr-bar"><i style="width:${pct}%"></i></div></div>
+        <div class="cr-tiers">${stt.tiers.map(chip).join('')}</div></div>`;
+    }).join('');
+    const renderSpecial = () => `<div class="cr-grid">${CAREER.specials().map(t => {
+      const got = CAREER.has(t.id), eq = p.equipped === t.id, g = got ? null : CAREER.progress(t, p);
+      const r = CAREER.RARITY[t.rarity];
+      return `<div class="cr-card r${t.rarity} ${got ? 'got' : 'lock'}${eq ? ' eq' : ''}" data-id="${t.id}">
+        <span class="ic">${got ? CAREER.titleSVG(t, 54) : '❔'}</span><span class="nm">${got ? CAREER.esc(t.name) : '？？？'}</span>
+        <span class="hint">${CAREER.esc(t.hint)}</span>
+        ${g ? `<div class="cr-bar"><i style="width:${g.pct}%"></i></div><span class="hint">${CAREER.fmtNum(g.cur, t.money)} / ${CAREER.fmtNum(g.need, t.money)}</span>` : ''}
+        <span class="cr-rar r${t.rarity}">${r.name}</span></div>`;
+    }).join('')}</div>`;
+    const STAT_ROWS = [['完成局数', 'games'], ['胜场', 'wins'], ['最长连胜', 'bestStreak'], ['最快夺冠（回合）', 'fastestWin'],
+      ['累计收租', 'rentGot', true], ['累计缴租', 'rentPaid', true], ['单局最高收租', 'bestMatchRent', true], ['单次最高收租', 'rentBest', true],
+      ['单局现金峰值', 'peakMoney', true], ['单局资产峰值', 'bestWorth', true], ['入狱次数', 'jailed'], ['刑满释放', 'served'],
+      ['交保释金', 'bail'], ['使用出狱许可证', 'bailCardUsed'], ['购地', 'bought'], ['建筑升级', 'upgrades'], ['城堡落成', 'lv4'],
+      ['拍卖竞得', 'auctionWins'], ['同色垄断', 'monopolies'], ['经过起点', 'passStart'], ['乘坐专机', 'flights'], ['放置路障', 'blocksSet'],
+      ['撞上路障', 'blocksHit'], ['拆迁令', 'demos'], ['使用道具', 'propsUsed'], ['抽卡', 'cards'], ['奖池所得', 'potWon', true],
+      ['踩中幸运格', 'luckyHits'], ['掷出 6 点', 'sixes'], ['破产', 'bankrupt'], ['认输', 'resigned']];
+    const renderStats = () => `<div class="cr-stattable">${STAT_ROWS.map(r => {
+      const v = p[r[1]] | 0;
+      const txt = (r[1] === 'fastestWin' && !v) ? '—' : (r[2] ? CAREER.fmtNum(v, true) : String(v));
+      return `<div><span>${r[0]}</span><span>${txt}</span></div>`;
+    }).join('')}</div>`;
+    const render = () => {
+      body.innerHTML = tab === 'tracks' ? renderTracks() : tab === 'special' ? renderSpecial() : renderStats();
+      const eqT = CAREER.equipped();
+      const who = $('#cr-who-badge', m.el);
+      if (who) { who.innerHTML = eqT ? CAREER.titleSVG(eqT, 56) : '❔'; who.classList.toggle('none', !eqT); }
+      $('#cr-eq', m.el).innerHTML = eqT
+        ? `佩戴中：<b>${CAREER.esc(eqT.name)}</b> · <span style="color:${(CAREER.RARITY[eqT.rarity] || {}).color || '#fff'}">${(CAREER.RARITY[eqT.rarity] || {}).name || ''}</span><br><span class="dim">${CAREER.esc(eqT.desc || eqT.hint || '')}</span>`
+        : '尚未佩戴称号<br><span class="dim">点击已解锁的称号即可佩戴</span>';
+      body.querySelectorAll('.got[data-id]').forEach(el => el.onclick = () => {
+        const id = el.dataset.id;
+        CAREER.equip(p.equipped === id ? null : id);
+        render(); refreshCareerBadge();
+        if (SFX.click) SFX.click();
+      });
+    };
+    m.el.querySelectorAll('.cr-tabs .lb-tab').forEach(b => b.onclick = () => {
+      m.el.querySelectorAll('.cr-tabs .lb-tab').forEach(x => x.classList.remove('on')); b.classList.add('on');
+      tab = b.dataset.t; render();
+    });
+    $('#cr-unequip', m.el).onclick = () => { CAREER.equip(null); render(); refreshCareerBadge(); };
+    $('#cr-close', m.el).onclick = () => m.close();
+    render();
+  }
+
   function showGameOver(ranking, humanWon) {
+    /* 生涯档案先折叠（新称号立刻体现在排行榜快照与本页徽章上），再记排行榜；两者任何失败都不影响结算 */
+    let career = { unlocked: [] };
+    try { if (typeof CAREER !== 'undefined') career = CAREER.commit(ranking) || career; } catch (e) { /* ignore */ }
     recordMatchResults(ranking);
+    try { refreshCareerBadge(); } catch (e) { /* ignore */ }
     return new Promise(res => {
       const medals = ['🥇', '🥈', '🥉', '🏅'];
       const rows = ranking.map((p, i) => {
         const c = charOf(p);
         const face = i === 0 && c.poseCheer ? c.poseCheer : c.avatarImg;
         const st = (G.stats && G.stats[p.idx]) || { rentGot: 0, rentPaid: 0, jailed: 0 };
+        const who = p.ai ? '' : (p.name ? `（${p.name}）` : '（你）');
         return `<div class="rank-row ${i === 0 ? 'champ' : ''}">
           <span class="rk-medal">${medals[i] || '🏅'}</span>
           <span class="rk-ava ${i === 0 ? 'rk-cheer' : ''}" style="--pc:${c.color}"><img src="${face}" alt="" draggable="false"></span>
-          <span class="rk-main"><span class="rk-name">${c.name}${p.ai ? '' : '（你）'}</span>
+          <span class="rk-main"><span class="rk-name">${c.name}${who}${(typeof CAREER !== 'undefined') ? CAREER.badgeForSeat(p.idx, { small: true }) : ''}</span>
             <span class="rk-sub">收租 ${fmt(st.rentGot)} · 缴租 ${fmt(st.rentPaid)} · 入狱 ${st.jailed} 次</span></span>
           <span class="rk-worth">${fmt(netWorth(p))}${p.alive ? '' : ' · 破产'}</span>
         </div>`;
       }).join('');
+      const unlockHTML = careerUnlockHTML(career.unlocked);
       const m = buildModal(`
         <div class="m-title big">${humanWon ? '🎉 恭喜夺冠！' : '🏁 游戏结束'}</div>
-        <div class="rank-list">${rows}</div>
+        <div class="rank-list">${rows}</div>${unlockHTML}
         <div class="m-actions center">
           <button class="btn btn-primary" id="go-again">再来一局</button>
           <button class="btn btn-ghost" id="go-menu">返回主菜单</button>
         </div>`, 'nomax noblock');
-      if (humanWon) confetti();
+      if (humanWon || career.unlocked.length) confetti();
+      if (career.unlocked.length === 1) toast(`🎖️ 称号解锁：${career.unlocked[0].icon} ${career.unlocked[0].name}`, '🎖️');
+      else if (career.unlocked.length > 1) toast(`🎖️ 一举解锁 ${career.unlocked.length} 个新称号！`, '🎖️');
       $('#go-again', m.el).onclick = () => { m.close(); res('again'); };
       $('#go-menu', m.el).onclick = () => { m.close(); res('menu'); };
     });
@@ -1579,12 +1887,33 @@ const ui = (() => {
     if (picking) endPick(null);
     document.querySelectorAll('#cutscene').forEach(e => e.remove());
     const to = $('#toasts'); if (to) to.innerHTML = '';
+    ntReset();            // 播报条队列清空（新局/回菜单不残留上局事件）
     auctionClose(true);   // 重开/回菜单时随手拆掉拍卖大厅
+    /* 残留弹窗一并拆除并归零计数：main.restart/backToMenu 直接清空 #modal-root 时不会走 close()，
+     * modalOpen 会永久 >0 → 新一局里点格子/悬停地契全部失效（对抗性审查 #R1） */
+    const mr = $('#modal-root'); if (mr) mr.innerHTML = '';
+    modalOpen = 0;
+    hideDeedHover();
+  }
+
+  /* 游戏速度（1 / 1.6 / 2.4）持久化：重开、再来一局、联机开局都沿用玩家上次的选择 */
+  const SPEED_STEPS = [1, 1.6, 2.4];
+  function speedLabel(sp) { return sp === 1 ? '1×' : (sp === 1.6 ? '2×' : '3×'); }
+  function applySpeed(sp, { persist = true } = {}) {
+    sp = SPEED_STEPS.indexOf(sp) >= 0 ? sp : 1;
+    G.speed = sp;
+    const b = $('#btn-speed'); if (b) b.textContent = speedLabel(sp);
+    if (persist) { try { localStorage.setItem('df_speed', String(sp)); } catch (e) { /* ignore */ } }
+    return sp;
+  }
+  function loadSpeed() {
+    try { const v = parseFloat(localStorage.getItem('df_speed')); return SPEED_STEPS.indexOf(v) >= 0 ? v : 1; } catch (e) { return 1; }
   }
 
   /* ================= 对局场景初始化 ================= */
   function initGameScene() {
     uixStyle();
+    ntReset();
     buildBoard();
     buildDice();
     buildTokens();
@@ -1593,8 +1922,8 @@ const ui = (() => {
     updateTileAll();
     updateHUD();
     $('#log-feed').innerHTML = '';
-    log('💡 目标：让对手全部破产，或在回合结束时成为首富！', 'turn');
-    log('🎲 点击「掷骰子」或按空格键开始', 'info');
+    log('目标：让对手全部破产，或在回合结束时成为首富！', 'turn');
+    log('点击「掷骰子」或按空格键开始', 'dice');
     requestAnimationFrame(() => { measure(); layoutTokens(false); });
   }
 
@@ -1610,7 +1939,11 @@ const ui = (() => {
     });
     $('#btn-roll').addEventListener('click', tryFireRoll);
     document.addEventListener('keydown', (e) => {
-      if (e.code === 'Space' && !e.repeat) { e.preventDefault(); tryFireRoll(); }
+      if (e.code === 'Space' && !e.repeat) {
+        const t = e.target;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;   /* 聊天框/昵称框里打空格不掷骰 */
+        e.preventDefault(); tryFireRoll();
+      }
     });
     const syncAudioBtns = () => {
       $('#btn-sound').textContent = SFX.isEnabled() ? '🔊' : '🔇';
@@ -1629,8 +1962,7 @@ const ui = (() => {
     syncAudioBtns();
     $('#btn-speed').addEventListener('click', () => {
       const sp = G.speed >= 2.4 ? 1 : (G.speed >= 1.6 ? 2.4 : 1.6);
-      G.speed = sp;
-      $('#btn-speed').textContent = sp === 1 ? '1×' : (sp === 1.6 ? '2×' : '3×');
+      applySpeed(sp);
       SFX.click();
     });
     $('#btn-rules').addEventListener('click', () => {
@@ -1647,21 +1979,42 @@ const ui = (() => {
           <p><b>🧾 税与奖池</b>：所得税、奢侈税与各类罚金进入中央公园「奖池」；踩到中央公园的人独得奖池。</p>
           <p><b>🛒 道具</b>：踩「道具商店」购买。你的回合掷骰前可点击头像旁的道具使用：遥控骰子（指定点数）、路障（拦截路人）、护身符（免租一次）、拆迁令（拆对手一层楼）、均富卡（全场现金平均）。</p>
           <p><b>⛓️ 监狱</b>：踩拘留所或抽中入狱卡会被警车押送入狱，可交 $2,000 保释、用出狱许可证，或蹲满 2 回合自动释放。<b>玩家在押期间，其他人经过他的地产一律免租</b>——蹲监狱的代价。</p>
-          <p><b>💀 破产</b>：付不起钱时先尝试拍卖资产，仍然不够（或选择认命）即破产出局。</p>
+          <p><b>💀 破产</b>：付不起钱时先尝试拍卖资产，仍然不够（或选择认命）即破产出局。输定了不想陪跑？顶栏「🔄 重开」菜单里可以 <b>🏳️ 认输</b>（自己回合的掷骰前或别人的回合），按破产结算并立即看结果。</p>
         </div>
         <div class="m-actions center"><button class="btn btn-primary">明白了</button></div>`, 'nomax');
       $('.m-actions .btn', m.el).onclick = () => m.close();
     });
     $('#btn-restart').addEventListener('click', () => {
+      /* 认输候选：本机人类座位（房主排除远程座位）。唯一本机人类 → 任何时候（非自己决策弹窗中）；
+       * 同屏多人 → 只有轮到自己且正等待掷骰的那位可以认输 */
+      const locals = (G.players || []).filter(p => p.alive && !p.ai && !(NET.active && NET.isRemoteSeat(p.idx)));
+      let cand = null;
+      if (typeof canResign === 'function' && !window.__netGuest) {
+        if (locals.length === 1 && canResign(locals[0])) cand = locals[0];
+        else if (locals.length > 1) { const c = G.players[G.cur]; if (c && locals.includes(c) && canResign(c)) cand = c; }
+      }
+      const guest = !!window.__netGuest;
       const m = buildModal(`
-        <div class="m-title">🔄 重新开始？</div>
-        <div class="m-body">当前对局进度将丢失。</div>
+        <div class="m-title">🔄 ${guest ? '对局菜单' : '重新开始？'}</div>
+        <div class="m-body">${guest ? '联机对局由房主控制重开；你可以返回主菜单离开房间。' : '当前对局进度将丢失。'}</div>
         <div class="m-actions center">
-          <button class="btn btn-primary" id="rs-yes">重新开始</button>
+          ${guest ? '' : '<button class="btn btn-primary" id="rs-yes">重新开始</button>'}
+          ${(!guest && locals.length && !G.over) ? `<button class="btn btn-resign" id="rs-resign" ${cand ? '' : 'disabled'} title="${cand ? `${pname(cand)} 认输离场，按破产结算` : '请在自己回合的掷骰前（或别人的回合）认输'}">🏳️ 认输${cand && locals.length > 1 ? `（${pname(cand)}）` : ''}</button>` : ''}
           <button class="btn btn-ghost" id="rs-menu">🏠 返回主菜单</button>
           <button class="btn btn-ghost" id="rs-no">继续游戏</button>
         </div>`, 'nomax');
-      $('#rs-yes', m.el).onclick = () => { m.close(); main.restart(); };
+      const yes = $('#rs-yes', m.el); if (yes) yes.onclick = () => { m.close(); main.restart(); };
+      const rs = $('#rs-resign', m.el);
+      if (rs) rs.onclick = async () => {
+        if (!cand) return;
+        m.close();
+        const sure = await choice({ title: '🏳️ 确认认输？', html: `<p><b>${pname(cand)}</b> 将按破产处理：资产归还银行、排名垫底。</p>`,
+          choices: [{ v: true, label: '认输离场', kind: 'danger' }, { v: false, label: '再想想', kind: 'ghost' }] });
+        if (sure && typeof resign === 'function') {
+          const done = await resign(cand);
+          if (!done) toast('现在不能认输：请在自己回合的掷骰前，或别人的回合再试', '🚫');
+        }
+      };
       $('#rs-menu', m.el).onclick = () => { m.close(); main.backToMenu(); };
       $('#rs-no', m.el).onclick = () => m.close();
     });
@@ -1686,10 +2039,13 @@ const ui = (() => {
     moneyFloat, floatAt, toast, news, log, choice, showCard, shopModal, sellModal,
     showGameOver, bindChrome, measure, renderBlocks, confetti, flashTile, deedHTML,
     rideStart, rideEnd, splash, auctionPrompt, cancelRollFor, tileFx, fireworkAtTile, propFanfare, arrestCutscene, abortTransient,
-    showLeaderboard,
+    showLeaderboard, showCareer, refreshCareerBadge,
     auctionOpen, auctionTurn, auctionBid, auctionPass, auctionGavel, auctionClose, auctionJoinAsk, auctionRps,
     setTokenHidden, cashFlowHTML,
-    _numberPicker: numberPicker,
+    applySpeed, loadSpeed, propTargetFilter, fireRemoteRoll, rollPending,
+    pickTile, endPick,
+    set onPick(fn) { pickHook = typeof fn === 'function' ? fn : null; },
+    _numberPicker: numberPicker, numberPicker,
     get modalOpenCount() { return modalOpen; },
     get auctionHallOpen() { return !!AH.el; },
   };
