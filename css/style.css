@@ -145,9 +145,8 @@ body {
 .hero-logo {
   display: block; width: min(600px, 52vw, 62vh); height: auto;
   filter: drop-shadow(0 16px 30px rgba(0, 0, 0, .55));
-  animation: heroFloat 5.5s ease-in-out 1s infinite;
+  
 }
-@keyframes heroFloat { 50% { transform: translateY(-5px); filter: drop-shadow(0 22px 34px rgba(0, 0, 0, .5)) drop-shadow(0 0 18px rgba(255, 215, 106, .12)); } }
 
 /* 分节标题：细金线 + 字距 */
 .ss-sect { display: flex; align-items: center; gap: 14px; margin: .6vh 0 2.8vh; color: #d9e6d3; font-size: 12.5px; letter-spacing: 5px; font-weight: 700; }
