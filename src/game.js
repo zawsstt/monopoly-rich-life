@@ -76,13 +76,18 @@ function milestone(key, text) {
 
 /* ---------- 开局 ---------- */
 function newGame(charIds, humanCharId, opts) {
+  /* 失信惩戒注入（净化心灵彩蛋 · DESIGN_PSA_EGG.md §5.2）：上局在管控视频期间逃离页面 → df_honor_v1.dishonored
+   * 本局开局一次性消费：初始资金 −20%（向下取整到百）+ 本机人类座位挂「失信人员」角标；psa.js 未加载时零影响 */
+  const psaHonor = (window.PSA && PSA.honorConsume) ? PSA.honorConsume() : null;
+  const startMoney = (psaHonor && psaHonor.penalty) ? Math.floor((opts.startMoney | 0) * 0.8 / 100) * 100 : opts.startMoney;
   G.gameId++;
   G.players = charIds.map((cid, i) => ({
     idx: i, charId: cid, ai: cid !== humanCharId, name: null,
-    money: opts.startMoney, pos: 0, alive: true,
+    money: startMoney, pos: 0, alive: true,
     inJail: false, jailTurns: 0, skipNext: 0, shield: false,
     insurance: false, bailiff: false, piggy: false,   // 道具体系 2.0 一次性状态槽（复用 shield 模式）
     forcedDice: null, bailCards: 0, props: {},
+    custody: false, honorTag: null,                   // 净化心灵管控态 / 失信人员角标（psa.js 驱动）
   }));
   /* 自定义名号：人类玩家使用大厅输入的昵称 */
   if (opts.nickname) {
@@ -95,6 +100,13 @@ function newGame(charIds, humanCharId, opts) {
       if (!p) return;
       p.ai = !!seat.ai;
       p.name = seat.name || null;
+    });
+  }
+  if (psaHonor && psaHonor.penalty) {
+    /* 只罚本机人类座位（同屏多人 = 同一页面共担；联机远程座位不挂本机档案的标记） */
+    G.players.forEach(p => {
+      const remote = (typeof NET !== 'undefined' && NET && NET.active && typeof NET.isRemoteSeat === 'function' && NET.isRemoteSeat(p.idx));
+      if (!p.ai && !remote) p.honorTag = psaHonor.tag || '失信人员';
     });
   }
   G.tiles = BOARD.map(() => ({ owner: null, level: 0 }));
@@ -118,10 +130,10 @@ function newGame(charIds, humanCharId, opts) {
   G.stats = G.players.map(() => ({ rentPaid: 0, rentGot: 0, jailed: 0, bought: 0,
     rentBest: 0, served: 0, bail: 0, bailCardUsed: 0, upgrades: 0, lv4: 0, auctionWins: 0, monopolies: 0,
     passStart: 0, flights: 0, blocksSet: 0, blocksHit: 0, demos: 0, propsUsed: 0, cards: 0, potWon: 0,
-    luckyHits: 0, sixes: 0, bankrupt: 0, resigned: 0, peakMoney: opts.startMoney | 0,
+    luckyHits: 0, sixes: 0, bankrupt: 0, resigned: 0, peakMoney: startMoney | 0,
     /* 道具体系 2.0 计数器（DESIGN_PROPS_V2.md §8）+ 入狱归因（净化心灵彩蛋预留，DESIGN_PSA_EGG.md §2） */
     sweeps: 0, steals: 0, insuredSave: 0, pierce: 0, piggySave: 0, rushes: 0,
-    jailCaused: 0, jailedBy: {} }));
+    jailCaused: 0, jailedBy: {}, psa: 0 }));   // psa：本局是否已触发净化心灵（一局一次落锁）
   /* 生涯档案：本机座位 = 大厅点选角色；展示局(allMax)不计入；matchToken 防同一局重复计入 */
   G.localIdx = G.players.findIndex(p => p.charId === humanCharId);
   G.demoMode = !!opts.allMax;
@@ -135,6 +147,7 @@ function newGame(charIds, humanCharId, opts) {
   ui.initGameScene();
   pickLuckyTile();
   pickSeason();
+  if (psaHonor && psaHonor.penalty) ui.toast('🚫 失信记录：上局逃避净化视频，本局初始资金 −20%', '🚫');   // 开局公示，避免被当成 bug
   runGame();
 }
 
@@ -220,6 +233,14 @@ async function playTurn(gid) {
   ui.setActive(player.idx);
   ui.updatePlayers();
   ui.log(`<b style="color:${playerColor(player)}">${pname(player)}</b> 的回合`, 'turn');
+
+  // —— 净化心灵管控（DESIGN_PSA_EGG.md §4.4）：不同于 skipNext 的计数跳过，解除由视频播完 / 倒计时 / 看门狗驱动 ——
+  if (window.PSA && PSA.shouldSkip && PSA.shouldSkip(player.idx)) {
+    ui.toast(`🧘 ${pname(player)} 净化心灵中…回合跳过`, '🧘');
+    ui.log(`${pname(player)} 净化心灵中，回合跳过`, 'bad');
+    await sleep(700);
+    return;
+  }
 
   // —— 跳过回合（交通管制） ——
   if (player.skipNext > 0) {
@@ -413,6 +434,11 @@ async function sendToJail(gid, player, { escort = true, cutscene = true, reason 
   SFX.jail();
   ui.toast(`⛓️ ${pname(player)} 被关进了监狱！`, '⛓️');
   ui.log(`${pname(player)} 进了监狱`, 'bad');
+  /* 净化心灵彩蛋：归因计数就位后的单点触发判定（阈值 3 / 同局一次，判定与演出全在 psa.js）
+   * 这里 await 的只是过场 + 押送演出（避免与本次逮捕过场叠画），视频管控在 psa.js 内异步进行，不阻塞引擎 */
+  if (window.PSA && PSA.notifyJailCaused && causer != null) {
+    try { await PSA.notifyJailCaused(gid, causer); } catch (e) { /* 彩蛋演出失败不影响对局 */ }
+  }
 }
 
 /* ---------- 拍卖系统（仅用于破产变卖） ----------
