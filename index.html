@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>大富翁 · 富贵人生</title>
 <link rel="icon" href="assets/img/ico_coin.png?v=46">
-<link rel="stylesheet" href="css/style.css?v=46">
+<link rel="stylesheet" href="css/style.css?v=49">
 <script>
 /* 最早的错误收集器：在任何游戏脚本之前挂载 */
 window.__errs = [];
@@ -19,24 +19,34 @@ window.addEventListener('unhandledrejection', function (e) {
 </script>
 </head>
 <body>
-<link rel="preload" as="image" href="assets/img/scene_poster.png">
 <div id="boot">
-  <div class="boot-logo">大富翁</div>
-  <div class="boot-sub">富贵人生 · WEB 版</div>
+  <div class="boot-frame" aria-hidden="true"></div>
+  <img class="boot-logo" src="assets/img/logo_title.svg" alt="大富翁 · 富贵人生 WEB 版" draggable="false">
   <div class="boot-bar"><i id="boot-fill"></i></div>
   <div class="boot-tip" id="boot-tip">正在加载资源…</div>
 </div>
 <div id="board-boot"><div class="bb-spin"></div><div class="bb-txt">正在搭建书房沙盘…</div></div>
 <style>
-#boot{position:fixed;inset:0;z-index:2000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
-  background:radial-gradient(120% 100% at 50% 0%,#123a28 0%,#08150e 70%);transition:opacity .5s ease}
+#boot{position:fixed;inset:0;z-index:2000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;
+  background:
+    radial-gradient(90% 60% at 50% 38%,rgba(255,215,106,.10),transparent 60%),
+    repeating-conic-gradient(rgba(255,255,255,.012) 0% 25%,transparent 0% 50%) 0 0/6px 6px,
+    radial-gradient(120% 100% at 50% 0%,#12402c 0%,#0a2418 55%,#06150e 100%);
+  transition:opacity .5s ease}
 #boot.off{opacity:0;pointer-events:none}
-#boot .boot-logo{color:#ffd76a;font:900 54px/1 "Microsoft YaHei",sans-serif;letter-spacing:10px;text-shadow:0 4px 24px rgba(240,168,24,.35)}
-#boot .boot-sub{color:#9db8a4;font:600 14px "Microsoft YaHei",sans-serif;letter-spacing:6px}
-#boot .boot-bar{width:min(360px,70vw);height:8px;border-radius:99px;background:rgba(255,255,255,.12);overflow:hidden}
+#boot .boot-frame{position:absolute;inset:16px;border:1px solid rgba(255,215,106,.22);border-radius:6px;pointer-events:none;
+  box-shadow:inset 0 0 0 5px rgba(0,0,0,.001),inset 0 0 60px rgba(0,0,0,.35)}
+#boot .boot-frame::before,#boot .boot-frame::after{content:'';position:absolute;width:38px;height:38px;border:2px solid rgba(255,215,106,.55)}
+#boot .boot-frame::before{left:-1px;top:-1px;border-right:none;border-bottom:none;border-radius:6px 0 0 0}
+#boot .boot-frame::after{right:-1px;bottom:-1px;border-left:none;border-top:none;border-radius:0 0 6px 0}
+#boot .boot-logo{width:min(560px,74vw);height:auto;display:block;filter:drop-shadow(0 14px 30px rgba(0,0,0,.5));user-select:none;
+  animation:bootLogo .9s cubic-bezier(.2,.9,.3,1.2) both}
+@keyframes bootLogo{from{opacity:0;transform:translateY(14px) scale(.96)}}
+#boot .boot-bar{width:min(360px,70vw);height:8px;border-radius:99px;background:rgba(0,0,0,.35);overflow:hidden;
+  box-shadow:inset 0 1px 3px rgba(0,0,0,.6),0 0 0 1px rgba(255,215,106,.22)}
 #boot .boot-bar i{display:block;height:100%;width:4%;border-radius:99px;background:linear-gradient(90deg,#ffd76a,#f0a429);
-  transition:width .25s ease;box-shadow:0 0 14px rgba(240,168,24,.5)}
-#boot .boot-tip{color:#8aa891;font-size:12.5px;letter-spacing:2px}
+  transition:width .25s ease;box-shadow:0 0 14px rgba(240,168,24,.5),inset 0 1px 0 rgba(255,255,255,.55)}
+#boot .boot-tip{color:#9db8a4;font:600 12.5px "Microsoft YaHei",sans-serif;letter-spacing:3px}
 #board-boot{position:fixed;inset:0;z-index:1500;display:none;align-items:center;justify-content:center;flex-direction:column;gap:16px;
   background:rgba(4,16,10,.72);backdrop-filter:blur(2px)}
 #board-boot .bb-spin{width:52px;height:52px;border-radius:50%;border:4px solid rgba(255,215,106,.25);border-top-color:#ffd76a;
@@ -50,32 +60,6 @@ window.addEventListener('unhandledrejection', function (e) {
 @keyframes bmghint{0%,100%{opacity:.72}50%{opacity:1}}
 </style>
 <script>
-(function () {
-  var total = 0, done = 0, bumpedApi;
-  function paint() {
-    var f = document.getElementById('boot-fill');
-    if (f) f.style.width = Math.min(96, Math.round(done / Math.max(1, total) * 96)) + '%';
-  }
-  window.__bootAdd = function (k) { total += k; paint(); };
-  window.__bootBump = function () { done++; paint(); };
-  window.__bootDone = function () {
-    var f = document.getElementById('boot-fill'); if (f) f.style.width = '100%';
-    var t = document.getElementById('boot-tip'); if (t) t.textContent = '加载完成！';
-    setTimeout(function () { var b = document.getElementById('boot'); if (b) { b.classList.add('off'); setTimeout(function () { b.remove(); }, 550); } }, 350);
-  };
-  document.addEventListener('load', function (e) {
-    var t = e.target;
-    if (t && (t.tagName === 'SCRIPT' || t.tagName === 'IMG')) window.__bootBump();
-  }, true);
-  document.addEventListener('error', function (e) {
-    var t = e.target;
-    if (t && (t.tagName === 'SCRIPT' || t.tagName === 'IMG')) window.__bootBump();
-  }, true);
-  document.addEventListener('DOMContentLoaded', function () {
-    try { document.querySelectorAll('img[src]').forEach(function (im) { window.__bootAdd(1); if (im.complete) window.__bootBump(); else { im.addEventListener('load', window.__bootBump); im.addEventListener('error', window.__bootBump); } }); } catch (e) {}
-    setTimeout(function () { window.__bootDone(); }, 450);
-  });
-})();
 window.showBoardBoot = function () { var b = document.getElementById("board-boot"); if (b) b.style.display = "flex"; };
 window.hideBoardBoot = function () { var b = document.getElementById("board-boot"); if (b) b.style.display = "none"; };
 </script>
@@ -90,21 +74,30 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
 
 <!-- ========== 开始界面 ========== -->
 <div id="start-screen">
+  <div class="ss-frame" aria-hidden="true"><i></i><i></i></div>
   <div class="hero">
-    <div class="hero-title">大富翁</div>
-    <div class="hero-sub">— 富 贵 人 生 · <b>WEB 版</b> —</div>
-
+    <img class="hero-logo" src="assets/img/logo_title.svg" alt="大富翁 · 富贵人生 WEB 版" draggable="false">
   </div>
 
+  <div class="ss-sect"><i></i><span>选 择 你 的 角 色</span><i></i></div>
   <div id="char-grid"></div>
 
   <div class="opts">
-    <div class="opt-group"><b>你的名号</b><input id="opt-name" maxlength="10" placeholder="起个响亮的名号" style="background:#0a1f14;border:1px solid rgba(240,180,41,.35);border-radius:8px;color:#ffe9a8;font:700 14px 'Microsoft YaHei',sans-serif;padding:7px 12px;width:150px;outline:none" /></div>
-      <div class="opt-group"><b>对手数量</b>
-      <span id="opt-ai">
-        <button data-n="1">1</button>
-        <button data-n="2">2</button>
-        <button data-n="3" class="on">3</button>
+    <div class="opts-tab">对 局 设 置</div>
+    <div class="opt-group opt-name"><b>你的名号</b><span class="opt-field"><input id="opt-name" maxlength="10" placeholder="起个响亮的名号" autocomplete="off" /><span id="career-badge" class="career-badge"></span></span></div>
+    <div class="opt-group opt-seg" data-hint="几位真人围着同一台电脑轮流操作；1 号位用你的名号，其余为 玩家2 / 3 / 4"><b>同屏玩家</b>
+      <span id="opt-humans" class="seg">
+        <button data-n="1" class="on" title="单人 vs AI"><em>单人</em></button>
+        <button data-n="2" title="2 位真人同屏轮流"><em>2 人</em></button>
+        <button data-n="3" title="3 位真人同屏轮流"><em>3 人</em></button>
+        <button data-n="4" title="4 位真人同屏轮流"><em>4 人</em></button>
+      </span>
+    </div>
+    <div class="opt-group opt-seg" data-hint="电脑对手的数量；真人 + AI 合计最多 4 席"><b>AI 对手</b>
+      <span id="opt-ai" class="seg">
+        <button data-n="1" title="1 位 AI 对手"><em>1 位</em></button>
+        <button data-n="2" title="2 位 AI 对手"><em>2 位</em></button>
+        <button data-n="3" class="on" title="3 位 AI 对手"><em>3 位</em></button>
       </span>
     </div>
     <div class="opt-group"><b>初始资金</b>
@@ -125,16 +118,20 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
   </div>
 
   <div class="start-actions">
-    <button id="btn-start" class="btn btn-primary">开 始 游 戏</button>
-    <button id="btn-watch" class="btn btn-ghost">👀 观战模式（4 AI）</button>
-    <button id="btn-net" class="btn btn-ghost">🌐 联机对战</button>
-      <button id="btn-records" class="btn btn-ghost">🏆 排行榜</button>
-      </div>
-      <div class="world-lore">
-        <p class="wl-main">传闻这座城里，六位奇人共守一张书桌沙盘——掷下骰子，买地起楼，坐地收租；<i>哪怕进了局子，也只是命运的又一次洗牌。</i></p>
-        <p class="wl-sub">骰子落定的那一刻，命运开始流转。<span>买下你的第一块地，让全城都姓你的姓。</span></p>
-      </div>
-    
+    <button id="btn-start" class="btn btn-primary btn-cta"><span>开 始 游 戏</span><small>掷下第一枚骰子</small></button>
+    <div class="start-sub">
+      <button id="btn-watch" class="btn btn-ghost" title="四位 AI 自动对决，坐着看戏">👀 观战模式（4 AI）</button>
+      <button id="btn-net" class="btn btn-ghost" title="P2P 直连，把房间码发给朋友">🌐 联机对战</button>
+      <button id="btn-records" class="btn btn-ghost" title="本机战绩 Top 10">🏆 排行榜</button>
+      <button id="btn-career" class="btn btn-ghost" title="跨局生涯档案与称号图鉴">🎖️ 生涯称号</button>
+    </div>
+  </div>
+  <div class="world-lore">
+    <span class="wl-seal" aria-hidden="true">富贵</span>
+    <p class="wl-main">传闻这座城里，六位奇人共守一张书桌沙盘——掷下骰子，买地起楼，坐地收租；<i>哪怕进了局子，也只是命运的又一次洗牌。</i></p>
+    <p class="wl-sub">骰子落定的那一刻，命运开始流转。<span>买下你的第一块地，让全城都姓你的姓。</span></p>
+  </div>
+
   <div id="net-lobby" class="hidden">
     <div class="net-box" id="net-chooser">
       <div class="net-title">🌐 联机对战</div>
@@ -171,18 +168,28 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
 <!-- ========== 对局界面 ========== -->
 <div id="game-screen" class="hidden">
   <header id="topbar">
-    <div class="logo-mini">大富翁<span>富贵人生</span></div>
-    <div id="hud-round">第 1 / 30 回合</div>
-    <div id="hud-season" style="display:none"></div>
+    <div class="logo-mini"><img src="assets/img/logo_mini.svg" alt="大富翁 · 富贵人生" draggable="false"></div>
+    <div class="hud-chips">
+      <div id="hud-round">第 1 / 30 回合</div>
+      <div id="hud-season" style="display:none"></div>
+    </div>
     <div class="tb-actions">
-      <button id="btn-speed" class="tb-btn" title="游戏速度">1×</button>
-      <button id="btn-sound" class="tb-btn" title="系统音效开关（骰子/事件等）">🔊</button>
-<button id="btn-bgm" class="tb-btn" title="游戏音乐开关" style="opacity:1">🎵</button>
+      <button id="btn-speed" class="tb-btn tb-speed" title="游戏速度">1×</button>
+      <button id="btn-sound" class="tb-btn tb-ico" title="系统音效开关（骰子/事件等）">🔊</button>
+      <button id="btn-bgm" class="tb-btn tb-ico" title="游戏音乐开关" style="opacity:1">🎵</button>
+      <span class="tb-sep"></span>
       <button id="btn-rules" class="tb-btn">📖 规则</button>
       <button id="btn-restart" class="tb-btn">🔄 重开</button>
       <button id="btn-menu" class="tb-btn">🏠 主菜单</button>
     </div>
   </header>
+  <div id="news-bar" aria-live="polite">
+    <div id="news-ticker" class="idle">
+      <span class="nt-tag"><i></i>快报</span>
+      <span class="nt-view"><span class="nt-msg" id="nt-msg">富贵人生 · 掷骰买地，坐地收租</span></span>
+      <span class="nt-q" id="nt-q"></span>
+    </div>
+  </div>
 
   <div id="main">
     <div id="board-wrap">
@@ -197,11 +204,10 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
       <div id="board">
         <div id="board-center">
           <div class="ribbon-band" aria-hidden="true"><span>MONOPOLY · 富贵人生</span></div>
-          <div id="ticker"></div>
           <div id="toasts"></div>
           <div id="splash"></div>
           <div class="bc-block bc-brand">
-            <div class="bc-logo">大富翁<i>富 贵 人 生</i></div>
+            <div class="bc-logo"><img src="assets/img/logo_title.svg" alt="大富翁 · 富贵人生" draggable="false"></div>
             <div class="pot-chip"><img src="assets/img/ico_coin.png" alt=""><div>奖池 <b id="pot-value">$0</b></div></div>
           </div>
           <div class="bc-block bc-action">
@@ -234,56 +240,214 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
   </div>
 </div>
 
-<script src="js/lib/three.min.js?v=46"></script>
-<script src="js/lib/peerjs.min.js?v=46"></script>
-<script src="src/data.js?v=46"></script>
-<script src="src/sfx.js?v=46"></script>
-<script src="src/bgm.js?v=47"></script>
-<script src="src/ai.js?v=46"></script>
-<script src="src/game.js?v=46"></script>
-<script src="src/uix.js?v=46"></script>
-<script src="src/net.js?v=46"></script>
-<script src="src/view3d.js?v=46"></script>
-<script src="src/buildings3d.js?v=46"></script>
-<script src="assets/models/props3d/prop_6.js?v=46"></script>
-<script src="assets/models/props3d/prop_3.js?v=46"></script>
-<script src="assets/models/props3d/prop_1.js?v=46"></script>
-<script src="assets/models/props3d/prop_8.js?v=46"></script>
-<script src="assets/models/props3d/prop_9.js?v=46"></script>
-<script src="assets/models/props3d/prop_13.js?v=46"></script>
-<script src="assets/models/props3d/prop_14.js?v=46"></script>
-<script src="assets/models/props3d/prop_10.js?v=46"></script>
-<script src="assets/models/props3d/prop_18.js?v=46"></script>
-<script src="assets/models/props3d/prop_16.js?v=46"></script>
-<script src="assets/models/props3d/prop_23.js?v=46"></script>
-<script src="assets/models/props3d/prop_19.js?v=46"></script>
-<script src="assets/models/props3d/prop_26.js?v=46"></script>
-<script src="assets/models/props3d/prop_24.js?v=46"></script>
-<script src="assets/models/props3d/prop_28.js?v=46"></script>
-<script src="assets/models/props3d/prop_21.js?v=46"></script>
-<script src="assets/models/props3d/prop_33.js?v=46"></script>
-<script src="assets/models/props3d/prop_30.js?v=46"></script>
-<script src="assets/models/props3d/prop_36.js?v=46"></script>
-<script src="assets/models/props3d/prop_34.js?v=46"></script>
-<script src="assets/models/props3d/prop_39.js?v=46"></script>
-<script src="assets/models/props3d/prop_38.js?v=46"></script>
-<script src="assets/models/specials3d/tile12_jail.js?v=46"></script>
-<script src="assets/models/specials3d/police_car.js?v=46"></script>
-<script src="assets/models/specials3d/tile15_station.js?v=46"></script>
-<script src="assets/models/specials3d/jet.js?v=46"></script>
-<script src="assets/models/specials3d/roadblock.js?v=46"></script>
-<script src="assets/models/specials3d/environment.js?v=46"></script>
-<script src="assets/models/chars3d/boss.js?v=46"></script>
-<script src="assets/models/chars3d/qian.js?v=46"></script>
-<script src="assets/models/chars3d/tang.js?v=46"></script>
-<script src="assets/models/chars3d/tu.js?v=46"></script>
-<script src="assets/models/chars3d/ren.js?v=46"></script>
-<script src="assets/models/chars3d/doudou.js?v=46"></script>
-<script src="assets/models/propFactories.js?v=46"></script>
-<script src="src/main.js?v=46"></script>
+<!-- ===== 首屏加载器：脚本 / 首屏图片 / 主界面 BGM 由此统一预取（真实字节进度），全部就绪并执行完毕后才揭开加载遮罩。
+     脚本标签为 type="text/plain" data-src，由下方加载器按文档顺序执行；data-size 为字节数（进度权重），由 tools_patch_boot_loader.py 生成。 ===== -->
+<script type="text/plain" data-src="js/lib/three.min.js?v=46" data-size="607784"></script>
+<script type="text/plain" data-src="js/lib/peerjs.min.js?v=46" data-size="92865"></script>
+<script type="text/plain" data-src="src/data.js?v=48" data-size="19699"></script>
+<script type="text/plain" data-src="src/sfx.js?v=46" data-size="7494"></script>
+<script type="text/plain" data-src="src/bgm.js?v=48" data-size="3417"></script>
+<script type="text/plain" data-src="src/ai.js?v=46" data-size="5583"></script>
+<script type="text/plain" data-src="src/game.js?v=47" data-size="50446"></script>
+<script type="text/plain" data-src="src/career.js?v=49" data-size="39427"></script>
+<script type="text/plain" data-src="src/uix.js?v=49" data-size="115175"></script>
+<script type="text/plain" data-src="src/net.js?v=46" data-size="19708"></script>
+<script type="text/plain" data-src="src/view3d.js?v=48" data-size="124225"></script>
+<script type="text/plain" data-src="src/buildings3d.js?v=46" data-size="93387"></script>
+<script type="text/plain" data-src="assets/models/props3d/prop_6.js?v=46" data-size="61031"></script>
+<script type="text/plain" data-src="assets/models/props3d/prop_3.js?v=46" data-size="51095"></script>
+<script type="text/plain" data-src="assets/models/props3d/prop_1.js?v=46" data-size="51550"></script>
+<script type="text/plain" data-src="assets/models/props3d/prop_8.js?v=46" data-size="63693"></script>
+<script type="text/plain" data-src="assets/models/props3d/prop_9.js?v=46" data-size="57437"></script>
+<script type="text/plain" data-src="assets/models/props3d/prop_13.js?v=46" data-size="57025"></script>
+<script type="text/plain" data-src="assets/models/props3d/prop_14.js?v=46" data-size="52917"></script>
+<script type="text/plain" data-src="assets/models/props3d/prop_10.js?v=46" data-size="55446"></script>
+<script type="text/plain" data-src="assets/models/props3d/prop_18.js?v=46" data-size="51718"></script>
+<script type="text/plain" data-src="assets/models/props3d/prop_16.js?v=46" data-size="54476"></script>
+<script type="text/plain" data-src="assets/models/props3d/prop_23.js?v=46" data-size="59867"></script>
+<script type="text/plain" data-src="assets/models/props3d/prop_19.js?v=46" data-size="55100"></script>
+<script type="text/plain" data-src="assets/models/props3d/prop_26.js?v=46" data-size="61490"></script>
+<script type="text/plain" data-src="assets/models/props3d/prop_24.js?v=46" data-size="62404"></script>
+<script type="text/plain" data-src="assets/models/props3d/prop_28.js?v=46" data-size="54619"></script>
+<script type="text/plain" data-src="assets/models/props3d/prop_21.js?v=46" data-size="56933"></script>
+<script type="text/plain" data-src="assets/models/props3d/prop_33.js?v=46" data-size="52826"></script>
+<script type="text/plain" data-src="assets/models/props3d/prop_30.js?v=46" data-size="52603"></script>
+<script type="text/plain" data-src="assets/models/props3d/prop_36.js?v=46" data-size="60889"></script>
+<script type="text/plain" data-src="assets/models/props3d/prop_34.js?v=46" data-size="62498"></script>
+<script type="text/plain" data-src="assets/models/props3d/prop_39.js?v=46" data-size="57044"></script>
+<script type="text/plain" data-src="assets/models/props3d/prop_38.js?v=46" data-size="60933"></script>
+<script type="text/plain" data-src="assets/models/specials3d/tile12_jail.js?v=46" data-size="36994"></script>
+<script type="text/plain" data-src="assets/models/specials3d/police_car.js?v=46" data-size="29333"></script>
+<script type="text/plain" data-src="assets/models/specials3d/tile15_station.js?v=46" data-size="58324"></script>
+<script type="text/plain" data-src="assets/models/specials3d/jet.js?v=46" data-size="30274"></script>
+<script type="text/plain" data-src="assets/models/specials3d/roadblock.js?v=46" data-size="22704"></script>
+<script type="text/plain" data-src="assets/models/specials3d/environment.js?v=48" data-size="74278"></script>
+<script type="text/plain" data-src="assets/models/specials3d/tile5_station.js?v=47" data-size="30104"></script>
+<script type="text/plain" data-src="assets/models/specials3d/tile25_harbor.js?v=47" data-size="29656"></script>
+<script type="text/plain" data-src="assets/models/specials3d/tile29_water.js?v=47" data-size="21650"></script>
+<script type="text/plain" data-src="assets/models/specials3d/tile11_power.js?v=47" data-size="21454"></script>
+<script type="text/plain" data-src="assets/models/specials3d/tile37_airport.js?v=47" data-size="24108"></script>
+<script type="text/plain" data-src="assets/models/chars3d/boss.js?v=48" data-size="42766"></script>
+<script type="text/plain" data-src="assets/models/chars3d/qian.js?v=46" data-size="36621"></script>
+<script type="text/plain" data-src="assets/models/chars3d/tang.js?v=48" data-size="35534"></script>
+<script type="text/plain" data-src="assets/models/chars3d/tu.js?v=48" data-size="44941"></script>
+<script type="text/plain" data-src="assets/models/chars3d/ren.js?v=48" data-size="34552"></script>
+<script type="text/plain" data-src="assets/models/chars3d/doudou.js?v=48" data-size="42064"></script>
+<script type="text/plain" data-src="assets/models/propFactories.js?v=46" data-size="12077"></script>
+<script type="text/plain" data-src="src/main.js?v=49" data-size="33005"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/scene_poster.jpg" data-size="472131"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/face3_boss.png?v=40" data-size="-1"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/face3_doudou.png?v=40" data-size="-1"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/face3_qian.png?v=40" data-size="-1"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/face3_ren.png?v=40" data-size="-1"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/face3_tang.png?v=40" data-size="-1"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/face3_tu.png?v=40" data-size="-1"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/full3_boss.png?v=40" data-size="-1"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/full3_doudou.png?v=40" data-size="-1"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/full3_qian.png?v=40" data-size="-1"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/full3_ren.png?v=40" data-size="-1"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/full3_tang.png?v=40" data-size="-1"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/full3_tu.png?v=40" data-size="-1"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/pose_boss_cheer.png" data-size="12733"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/pose_boss_hit.png" data-size="16300"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/pose_doudou_cheer.png" data-size="14398"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/pose_doudou_hit.png" data-size="17458"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/pose_qian_cheer.png" data-size="14138"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/pose_qian_hit.png" data-size="16778"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/pose_ren_cheer.png" data-size="14133"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/pose_ren_hit.png" data-size="17425"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/pose_tang_cheer.png" data-size="14620"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/pose_tang_hit.png" data-size="16817"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/pose_tu_cheer.png" data-size="13950"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/pose_tu_hit.png" data-size="16636"></script>
+<script type="text/plain" data-kind="audio" data-src="assets/audio/bgm_menu.mp3" data-size="1159737"></script>
 <script>
-/* [assets] 运行时自检（模块 C）：素材全局对象计数 + 3D 视图状态，用户端自诊依据 */
 (function () {
+  'use strict';
+  var els = document.querySelectorAll('script[data-src]');
+  var items = [];
+  for (var i = 0; i < els.length; i++) {
+    var el = els[i];
+    items.push({ url: el.getAttribute('data-src'), kind: el.getAttribute('data-kind') || 'js', size: +el.getAttribute('data-size') || 0,
+      loaded: 0, done: false, failed: false, text: null, blob: null });
+  }
+  var fill = document.getElementById('boot-fill'), tip = document.getElementById('boot-tip');
+  var totalBytes = 0; items.forEach(function (it) { totalBytes += it.size; });
+  var painted = -1, raf = 0, CAP = 92;   /* 92% 之后留给脚本执行与首帧排版 */
+  function progress() { var got = 0; items.forEach(function (it) { got += it.done ? it.size : Math.min(it.loaded, it.size); }); return totalBytes ? got / totalBytes : 1; }
+  function paint() { raf = 0; var pct = Math.round(progress() * CAP); if (pct !== painted && fill) { painted = pct; fill.style.width = Math.max(3, pct) + '%'; } }
+  function schedule() { if (!raf) raf = requestAnimationFrame(paint); }
+  function setTip(t) { if (tip) tip.textContent = t; }
+  function withTimeout(p, ms, onAbort) {
+    return new Promise(function (res, rej) {
+      var t = setTimeout(function () { if (onAbort) onAbort(); rej(new Error('timeout')); }, ms);
+      p.then(function (v) { clearTimeout(t); res(v); }, function (e) { clearTimeout(t); rej(e); });
+    });
+  }
+  function fetchBytes(it) {
+    var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var p = fetch(it.url, ctrl ? { signal: ctrl.signal } : undefined).then(function (res) {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      if (!res.body || !res.body.getReader) return res.arrayBuffer();
+      var reader = res.body.getReader(), chunks = [], len = 0;
+      return new Promise(function (resolve, reject) {
+        function pump() {
+          reader.read().then(function (r) {
+            if (r.done) {
+              var out = new Uint8Array(len), off = 0;
+              chunks.forEach(function (c) { out.set(c, off); off += c.byteLength; });
+              resolve(out.buffer); return;
+            }
+            chunks.push(r.value); len += r.value.byteLength; it.loaded = len; schedule(); pump();
+          }, reject);
+        }
+        pump();
+      });
+    });
+    return withTimeout(p, 90000, function () { if (ctrl) ctrl.abort(); });
+  }
+  /* 图片走渲染器自身的图片缓存（与 CSS 背景 / <img> 共用一份请求），load 后再 decode 保证上屏零解码卡顿 */
+  function loadImage(it) {
+    return new Promise(function (resolve) {
+      var im = new Image();
+      var finish = function () { resolve(); };
+      im.onload = function () { if (im.decode) im.decode().then(finish, finish); else finish(); };
+      im.onerror = function () { it.failed = true; finish(); };
+      im.src = it.url;
+    });
+  }
+  function loadItem(it, attempt) {
+    var p = (it.kind === 'img') ? loadImage(it) : fetchBytes(it).then(function (ab) {
+      if (it.kind === 'js') it.text = new TextDecoder('utf-8').decode(ab);
+      else it.blob = new Blob([ab], { type: 'audio/mpeg' });
+      if (!it.size) { it.size = ab.byteLength; totalBytes += it.size; }
+    });
+    return p.then(function () { it.done = true; it.loaded = it.size; schedule(); }, function (e) {
+      if (attempt < 1) { it.loaded = 0; return loadItem(it, attempt + 1); }
+      it.failed = true; it.done = true; schedule();
+      console.warn('[boot] 资源预取失败，回退常规加载：', it.url, e && e.message);
+    });
+  }
+  /* 并发池：脚本优先（保持文档顺序），图片 / 音频随后 */
+  var queue = items.slice().sort(function (a, b) { return (a.kind === 'js' ? 0 : 1) - (b.kind === 'js' ? 0 : 1); });
+  var LIMIT = 8, active = 0;
+  var allDone = new Promise(function (resolve) {
+    var pending = queue.length;
+    if (!pending) { resolve(); return; }
+    function launch() {
+      while (active < LIMIT && queue.length) {
+        var it = queue.shift(); active++;
+        loadItem(it, 0).then(function () { active--; pending--; if (pending === 0) resolve(); else launch(); });
+      }
+    }
+    launch();
+  });
+  /* 按文档顺序执行脚本；预取失败的回退 <script src> 并等待，顺序不乱 */
+  function runScripts() {
+    var js = items.filter(function (it) { return it.kind === 'js'; });
+    return js.reduce(function (chain, it) {
+      return chain.then(function () {
+        if (it.text != null) {
+          var s = document.createElement('script');
+          s.text = it.text + '\n//# sourceURL=' + it.url;
+          document.head.appendChild(s);
+          return;
+        }
+        return new Promise(function (resolve) {
+          var s = document.createElement('script'); s.src = it.url; s.async = false;
+          s.onload = s.onerror = function () { resolve(); };
+          document.head.appendChild(s);
+        });
+      });
+    }, Promise.resolve());
+  }
+
+  setTip('正在加载引擎与素材…');
+  var slow = setTimeout(function () { setTip('网络较慢，仍在加载…'); }, 15000);
+  window.__bootStart = performance.now();
+  allDone.then(function () {
+    clearTimeout(slow);
+    window.__preloaded = {};
+    items.forEach(function (it) { if (it.kind === 'audio' && it.blob) window.__preloaded[it.url] = URL.createObjectURL(it.blob); });
+    setTip('正在启动游戏…');
+    if (fill) fill.style.width = '96%';
+    return runScripts();
+  }).then(function () {
+    if (window.__assetsSelfCheck) { try { window.__assetsSelfCheck(); } catch (e) { /* */ } }
+    /* 主菜单先排版上屏一帧再揭开遮罩：用户看到的第一帧就是完整画面 */
+    return new Promise(function (r) { requestAnimationFrame(function () { requestAnimationFrame(r); }); });
+  }).then(function () {
+    if (fill) fill.style.width = '100%';
+    setTip('加载完成！');
+    window.__bootMs = Math.round(performance.now() - window.__bootStart);
+    var b = document.getElementById('boot');
+    setTimeout(function () { if (b) { b.classList.add('off'); setTimeout(function () { b.remove(); }, 550); } }, 250);
+  });
+})();
+</script>
+<script>
+/* [assets] 运行时自检：素材全局对象计数 + 3D 视图状态（加载器执行完全部脚本后调用），用户端自诊依据 */
+window.__assetsSelfCheck = function () {
   function line(state) {
     var c = window.Char3D ? Object.keys(window.Char3D).length : 0;
     var p = window.Props3D ? Object.keys(window.Props3D).length : 0;
@@ -291,16 +455,14 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
     console.log('[assets] Char3D=' + c + ' Props3D=' + p + ' Special3D=' + s + ' view3d=' + state);
   }
   var threeOk = (typeof window.THREE !== 'undefined' && !!window.THREE.REVISION);
-  line(threeOk ? 'loaded' : 'off');            /* 脚本全部解析完即报（three/vendor 加载情况） */
-  window.addEventListener('load', function () { /* 开局后复查：v3d-on 由 V3D.initGameScene 挂上 */
-    var tries = 0;
-    var t = setInterval(function () {
-      tries++;
-      if (document.body.classList.contains('v3d-on')) { clearInterval(t); line('on'); }
-      else if (tries >= 60) { clearInterval(t); line('loaded'); }
-    }, 500);
-  });
-})();
+  line(threeOk ? 'loaded' : 'off');
+  var tries = 0;
+  var t = setInterval(function () { /* 开局后复查：v3d-on 由 V3D.initGameScene 挂上 */
+    tries++;
+    if (document.body.classList.contains('v3d-on')) { clearInterval(t); line('on'); }
+    else if (tries >= 60) { clearInterval(t); line('loaded'); }
+  }, 500);
+};
 </script>
 </body>
 </html>
