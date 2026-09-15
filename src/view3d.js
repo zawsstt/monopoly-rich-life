@@ -1065,9 +1065,16 @@ const V3D = (() => {
     /* 道具摆件：出租车 + 私人飞机（Building3D 工厂） */
     try {
       const B = window.Building3D;
-      if (B && B.props && B.props.taxi) {
-        const taxi = B.props.taxi();
+      let taxi = null;
+      if (window.Special3D && typeof window.Special3D.taxi === 'function') {
+        try { taxi = window.Special3D.taxi(); } catch (e) { taxi = null; }
+      }
+      if (!taxi && B && B.props && B.props.taxi) {
+        taxi = B.props.taxi();
         taxi.scale.setScalar(2.6);
+      }
+      if (taxi) {
+        if (!taxi.scale || taxi.scale.x === 1) taxi.scale.setScalar(1.34);   /* 精细模型自然尺寸≈2.4 长 */
         taxi.position.set(-27.5, 0.02, -3.5);
         taxi.rotation.y = 0.75;
         taxi.traverse(o => { if (o.isMesh) o.castShadow = true; });
