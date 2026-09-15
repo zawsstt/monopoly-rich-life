@@ -47,6 +47,19 @@ const ui = (() => {
 /* 认输按钮（重开菜单内） */
 .btn.btn-resign { background: rgba(255,107,107,.12); color: #ffb3b3; border: 1px solid rgba(255,107,107,.4); }
 .btn.btn-resign[disabled] { opacity: .45; cursor: not-allowed; }
+/* 道具体系 2.0：芯片/商店条目按稀有度描边（常见白/精良绿/稀有蓝/史诗紫，与称号五档同色） */
+.pchip[data-rarity="1"] { box-shadow: inset 0 0 0 1px rgba(201,214,207,.55); }
+.pchip[data-rarity="2"] { box-shadow: inset 0 0 0 1px rgba(95,211,138,.75); }
+.pchip[data-rarity="3"] { box-shadow: inset 0 0 0 1px rgba(90,169,255,.8); }
+.pchip[data-rarity="4"] { box-shadow: inset 0 0 0 1px rgba(195,123,255,.85); }
+.shop-item[data-rarity="2"] .si-info > b { color: #5fd38a; }
+.shop-item[data-rarity="3"] .si-info > b { color: #5aa9ff; }
+.shop-item[data-rarity="4"] .si-info > b { color: #c37bff; }
+.shop-item .si-counter { display: block; font-size: 11px; color: #ffd76a; opacity: .85; margin-top: 2px; }
+/* 选人弹窗（窃贼卡/诬陷卡）候选行 */
+.pp-row { display: flex; align-items: center; gap: 8px; }
+.pp-row img { width: 26px; height: 26px; border-radius: 50%; object-fit: cover; }
+.pp-inv { font-size: 12px; opacity: .85; }
 `;
       document.head.appendChild(st);
     } catch (e) { /* 无 head 环境（桩测试）忽略 */ }
@@ -515,7 +528,10 @@ const ui = (() => {
       if (!p.alive) badges.push('<span class="bd bd-dead">💀 破产</span>');
       else {
         if (p.inJail) badges.push('<span class="bd bd-jail" title="羁押中：无法行动，交保释金 / 用出狱许可证 / 蹲满回合可出狱">⛓ 羁押中</span>');
-        if (p.shield) badges.push('<span class="bd bd-glow" title="护身符生效">🧿</span>');
+        if (p.shield) badges.push('<span class="bd bd-glow" title="护身符生效：下一次应付租金免付">🧿</span>');
+        if (p.insurance) badges.push('<span class="bd bd-glow" title="保险单生效：名下建筑下一次被拆迁令/市政施工拆除时层数不减">📋</span>');
+        if (p.bailiff) badges.push('<span class="bd bd-glow" title="强制收租令待发：下一次收到租金时，租客的护身符失效仍须付租">📢</span>');
+        if (p.piggy) badges.push('<span class="bd bd-glow" title="私房钱在库：均富卡结算时保留原现金，不参与均摊">🐷</span>');
         if (p.forcedDice != null) badges.push('<span class="bd" title="遥控骰子已设定">🔮</span>');
         if (p.bailCards > 0) badges.push(`<span class="bd" title="出狱许可证×${p.bailCards}">🎫${p.bailCards}</span>`);
       }
@@ -530,11 +546,15 @@ const ui = (() => {
       if (!p.alive) { pr.innerHTML = ''; return; }
       const chips = Object.keys(PROPS).map(k => {
         const n = p.props[k] || 0;
+        if (n <= 0) return '';
         /* 联机客人端只能点自己座位的道具（此前所有人类座位的道具在客人端都亮着，点了也被房主丢弃，纯误导） */
         const mineOnGuest = !window.__netGuest || (NET.active && p.idx === NET.mySeat);
-        const usable = !p.ai && p.alive && phaseAllowsProps() && isMyPreRoll(p) && mineOnGuest
+        let usable = !p.ai && p.alive && phaseAllowsProps() && isMyPreRoll(p) && mineOnGuest
           && (!window.__seatCheck || window.__seatCheck(p));
-        return n > 0 ? `<button class="pchip" data-prop="${k}" ${usable ? '' : 'disabled'} title="${PROPS[k].name}：${PROPS[k].desc}">${PROPS[k].icon}<b>${n}</b></button>` : '';
+        /* 目标型道具：场上没有合法目标时预置灰（清障车无路障 / 施工令无可加层地 / 窃贼卡无库存对手 / 诬陷卡无可押对手；路障/拆迁令顺带补齐） */
+        if (usable && !propHasTarget(k, p)) usable = false;
+        const title = `${PROPS[k].name}：${PROPS[k].desc}${PROPS[k].counter ? '（' + PROPS[k].counter + '）' : ''}`;
+        return `<button class="pchip" data-prop="${k}" data-rarity="${PROPS[k].rarity || 1}" ${usable ? '' : 'disabled'} title="${title}">${PROPS[k].icon}<b>${n}</b></button>`;
       }).join('');
       pr.innerHTML = chips || '<span class="pc-noprop">暂无道具 · 踩「道具商店」可购买</span>';
     });
@@ -553,7 +573,48 @@ const ui = (() => {
       const st = G.tiles[i];
       return BOARD[i].type === 'prop' && st.owner != null && st.owner !== p.idx && st.level > 0;
     };
+    if (key === 'sweeper') return i => G.blocks[i] != null;   /* 场上任意路障（含自己放错位的） */
+    if (key === 'rush') {
+      const cap = (G.season && G.season.id === 'build') ? 4 : 3;   /* 普通周上限 3 级，建设周可冲 4 级 */
+      return i => BOARD[i].type === 'prop' && G.tiles[i].owner === p.idx && (G.tiles[i].level || 0) < cap;
+    }
     return null;
+  }
+  /* 需要选对手玩家的道具（窃贼卡/诬陷卡）的合法目标判定：t 为目标座位号；本地候选列表 / 房主复核共用 */
+  function propPlayerFilter(key, p, t) {
+    const q = G.players[t];
+    if (!q || !q.alive || q === p || q.idx === p.idx) return false;
+    if (key === 'thief') return Object.keys(q.props || {}).some(k => k !== 'thief' && (q.props[k] | 0) > 0);   /* 只偷得到非窃贼卡的库存 */
+    if (key === 'frame') return !q.inJail;   /* 已在押者不可再押 */
+    return false;
+  }
+  function propNeedsPlayer(key) { return key === 'thief' || key === 'frame'; }
+  /* 芯片预置灰用：该道具当前是否存在至少一个合法目标（无目标需求的道具恒为 true） */
+  function propHasTarget(key, p) {
+    if (propNeedsPlayer(key)) return G.players.some(q => propPlayerFilter(key, p, q.idx));
+    const f = propTargetFilter(key, p);
+    if (!f) return true;
+    for (let i = 0; i < BOARD.length; i++) if (f(i)) return true;
+    return false;
+  }
+  /* 选人弹窗：候选行显示对手头像 + 库存图标（公开信息）；返回座位号或 null */
+  function pickPlayer(key, p) {
+    const P = PROPS[key] || {};
+    const cands = G.players.filter(q => propPlayerFilter(key, p, q.idx));
+    if (!cands.length) return Promise.resolve(null);
+    const inv = q => Object.keys(q.props || {}).filter(k => (q.props[k] | 0) > 0)
+      .map(k => `${PROPS[k].icon}×${q.props[k]}`).join(' ') || '空';
+    const choices = cands.map(q => ({
+      v: q.idx, kind: 'ghost',
+      label: `<span class="pp-row"><img src="${charOf(q).avatarImg}" alt=""><b style="color:${playerColor(q)}">${pname(q)}</b>` +
+        (key === 'thief' ? `<span class="pp-inv">${inv(q)}</span>` : `<span class="pp-inv">${fmt(q.money)}</span>`) + '</span>',
+    }));
+    choices.push({ v: null, label: '取消', kind: 'ghost' });
+    return choice({
+      title: `${P.icon || ''} ${P.name || '选择目标'}`,
+      html: `<p>${key === 'thief' ? '选择要下手的对手（随机偷走其库存 1 件，偷不到窃贼卡）' : '选择要诬陷的对手（立即被警车押送入狱）'}</p>`,
+      choices,
+    });
   }
 
   /* 道具点击（事件委托） */
@@ -564,11 +625,16 @@ const ui = (() => {
     const p = G.players[idx];
     const key = chip.dataset.prop;
     SFX.click();
+    const PICK_HINT = { block: '🚧 选择放置路障的格子', demo: '💣 选择要拆除的对手建筑', sweeper: '🚛 选择要拆除的路障', rush: '🏗️ 选择要加急施工的自有地块' };
     if (window.__netGuest) {
-      /* 联机客人：选格类道具先在本地棋盘点选目标，再把格号上报房主校验执行 */
+      /* 联机客人：选格/选人类道具先在本地点选目标，再把目标上报房主校验执行（随机结果只在房主侧产生） */
       const f = propTargetFilter(key, p);
       if (f) {
-        const t = await pickTile(f);
+        const t = await pickTile(f, PICK_HINT[key]);
+        if (t == null) return;
+        NET.toHost({ t: 'prop', key, idx: p.idx, arg: t });
+      } else if (propNeedsPlayer(key)) {
+        const t = await pickPlayer(key, p);
         if (t == null) return;
         NET.toHost({ t: 'prop', key, idx: p.idx, arg: t });
       } else {
@@ -581,8 +647,12 @@ const ui = (() => {
       const v = await numberPicker();
       if (v == null || gid !== G.gameId) return;
       await useProp(gid, p, 'dice', v);
-    } else if (key === 'block' || key === 'demo') {
-      const t = await pickTile(propTargetFilter(key, p));
+    } else if (propTargetFilter(key, p)) {
+      const t = await pickTile(propTargetFilter(key, p), PICK_HINT[key]);
+      if (t == null || gid !== G.gameId) return;
+      await useProp(gid, p, key, t);
+    } else if (propNeedsPlayer(key)) {
+      const t = await pickPlayer(key, p);
       if (t == null || gid !== G.gameId) return;
       await useProp(gid, p, key, t);
     } else {
@@ -1030,9 +1100,17 @@ const ui = (() => {
     });
   }
 
-  /* 格子点选模式（路障/拆迁令）；pickHook 通知 3D 层高亮可选格（2D 格子在 v3d 模式下不可见） */
+  /* 格子点选模式（路障/拆迁令/清障车/施工令）；pickHook 通知 3D 层高亮可选格（2D 格子在 v3d 模式下不可见）
+   * hint：#pickbar 提示语按道具定制（"选择要拆除的路障"/"选择要加急的地块"），结束点选时恢复默认文案 */
   let pickHook = null;
-  function pickTile(filter) {
+  let pickDefaultHint = null;
+  function setPickHint(text) {
+    const sp = $('#pickbar span');
+    if (!sp) return;
+    if (pickDefaultHint == null) pickDefaultHint = sp.textContent || '';
+    sp.textContent = text || pickDefaultHint;
+  }
+  function pickTile(filter, hint) {
     return new Promise(res => {
       picking = { filter, resolve: res };
       const valid = [];
@@ -1041,6 +1119,7 @@ const ui = (() => {
         if (filter(i)) { el.classList.add('pickable'); valid.push(i); }
       });
       if (!valid.length) { for (let i = 0; i < BOARD.length; i++) if (filter(i)) valid.push(i); }   /* 无 DOM 格子（桩环境）时直接按规则枚举 */
+      try { if (hint) setPickHint(hint); } catch (e) { /* 桩环境无 span 忽略 */ }
       $('#pickbar').classList.add('show');
       try { if (pickHook) pickHook(valid); } catch (e) { /* 3D 高亮失败不影响点选 */ }
     });
@@ -1051,6 +1130,7 @@ const ui = (() => {
     picking = null;
     $$('.tile').forEach(el => el.classList.remove('pickable'));
     $('#pickbar').classList.remove('show');
+    try { if (pickDefaultHint != null) setPickHint(null); } catch (e) { /* ignore */ }
     try { if (pickHook) pickHook(null); } catch (e) { /* ignore */ }
     resolve(val);
   }
@@ -1108,7 +1188,7 @@ const ui = (() => {
       case 'chance': return '机会：抽一张机会卡，好坏参半。';
       case 'destiny': return '命运：一张新闻卡，往往牵动全场。';
       case 'tax': return t.taxKind === 'income' ? '所得税：缴纳现金的 10%（$2,000 起）进入奖池。' : '奢侈税：按总资产的 3% 缴纳，进入奖池。';
-      case 'shop': return '道具商店：购买遥控骰子、路障、护身符等道具。';
+      case 'shop': return '道具商店：购买遥控骰子、路障、护身符、清障车、保险单、窃贼卡等 12 种道具。';
     }
     return '';
   }
@@ -1136,9 +1216,9 @@ const ui = (() => {
         const items = Object.keys(PROPS).map(k => {
           const P = PROPS[k];
           const owned = (lp.props && lp.props[k]) || 0;
-          return `<div class="shop-item">
+          return `<div class="shop-item" data-rarity="${P.rarity || 1}">
             <span class="si-ico">${P.icon}</span>
-            <div class="si-info"><b>${P.name}</b><small>${P.desc}</small></div>
+            <div class="si-info"><b>${P.name}</b><small>${P.desc}</small>${P.counter ? `<small class="si-counter">🛡️ ${P.counter}</small>` : ''}</div>
             <div class="si-own" data-own="${k}">持有 ${owned}/${PROP_MAX}</div>
             <button class="btn btn-mini btn-primary" data-buy="${k}" ${canBuy(lp, k) ? '' : 'disabled'}>${fmt(P.price)}</button>
           </div>`;
@@ -2047,7 +2127,7 @@ const ui = (() => {
     showLeaderboard, showCareer, refreshCareerBadge,
     auctionOpen, auctionTurn, auctionBid, auctionPass, auctionGavel, auctionClose, auctionJoinAsk, auctionRps,
     setTokenHidden, cashFlowHTML,
-    applySpeed, loadSpeed, propTargetFilter, fireRemoteRoll, rollPending,
+    applySpeed, loadSpeed, propTargetFilter, propPlayerFilter, propHasTarget, fireRemoteRoll, rollPending,
     pickTile, endPick,
     set onPick(fn) { pickHook = typeof fn === 'function' ? fn : null; },
     _numberPicker: numberPicker, numberPicker,
