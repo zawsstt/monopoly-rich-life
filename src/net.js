@@ -164,11 +164,12 @@ const NET = (() => {
         GH = guestHandlers();
         hostConn = peer.connect(PREFIX + roomCode, { reliable: true });
         clearTimeout(failTimer);
+        /* 递增超时 9s/16s/28s/28s：弱网（移动 NAT/VPN）与慢 ICE 下 8s 会误杀即将建立的连接 */
         failTimer = setTimeout(() => {
           stage('conn-timeout#' + attempt);
-          if (attempt < 3) tryOnce();
+          if (attempt < 4) tryOnce();
           else onFail && onFail('timeout');
-        }, 8000);
+        }, attempt === 1 ? 9000 : attempt === 2 ? 16000 : 28000);
         hostConn.on('open', () => {
           stage('conn-open#' + attempt);
           clearTimeout(failTimer);
