@@ -528,6 +528,8 @@ const ui = (() => {
       if (!p.alive) badges.push('<span class="bd bd-dead">💀 破产</span>');
       else {
         if (p.inJail) badges.push('<span class="bd bd-jail" title="羁押中：无法行动，交保释金 / 用出狱许可证 / 蹲满回合可出狱">⛓ 羁押中</span>');
+        if (p.custody) badges.push('<span class="bd bd-jail bd-psa" title="净化心灵管控中：回合自动跳过，视频/倒计时结束后归队">🧘 净化中</span>');
+        if (p.honorTag) badges.push(`<span class="bd bd-dishonor" title="诚信档案：上局逃避净化视频，本局初始资金 −20%">🚫 ${p.honorTag}</span>`);
         if (p.shield) badges.push('<span class="bd bd-glow" title="护身符生效：下一次应付租金免付">🧿</span>');
         if (p.insurance) badges.push('<span class="bd bd-glow" title="保险单生效：名下建筑下一次被拆迁令/市政施工拆除时层数不减">📋</span>');
         if (p.bailiff) badges.push('<span class="bd bd-glow" title="强制收租令待发：下一次收到租金时，租客的护身符失效仍须付租">📢</span>');
@@ -537,10 +539,10 @@ const ui = (() => {
       }
       el.classList.toggle('dead', !p.alive);
       $('.pc-badges', el).innerHTML = badges.join('');
-      /* 棋子显隐跟随羁押状态（出狱 / 联机 sync 快照后自动恢复；押送中 riding 状态由 rideStart/rideEnd 自管） */
+      /* 棋子显隐跟随羁押 / 净化管控状态（出狱 / 联机 sync 快照后自动恢复；押送中 riding 状态由 rideStart/rideEnd 自管） */
       const tok = tokenEls.get(p.idx);
       if (tok && p.alive && !tok.classList.contains('riding')) {
-        tok.classList.toggle('custody', !!p.inJail);
+        tok.classList.toggle('custody', !!p.inJail || !!p.custody);
       }
       const pr = $('.pc-props', el);
       if (!p.alive) { pr.innerHTML = ''; return; }
@@ -1848,11 +1850,13 @@ const ui = (() => {
     }).join('');
     const renderSpecial = () => `<div class="cr-grid">${CAREER.specials().map(t => {
       const got = CAREER.has(t.id), eq = p.equipped === t.id, g = got ? null : CAREER.progress(t, p);
+      /* 隐藏款（净化心灵三枚）：未解锁时连 hint 与进度条也不显示，只留「？？？（在对局中自会知晓）」 */
+      const secret = !got && !!t.hidden;
       const r = CAREER.RARITY[t.rarity];
-      return `<div class="cr-card r${t.rarity} ${got ? 'got' : 'lock'}${eq ? ' eq' : ''}" data-id="${t.id}">
+      return `<div class="cr-card r${t.rarity} ${got ? 'got' : 'lock'}${eq ? ' eq' : ''}${secret ? ' secret' : ''}" data-id="${t.id}">
         <span class="ic">${got ? CAREER.titleSVG(t, 54) : '❔'}</span><span class="nm">${got ? CAREER.esc(t.name) : '？？？'}</span>
-        <span class="hint">${CAREER.esc(t.hint)}</span>
-        ${g ? `<div class="cr-bar"><i style="width:${g.pct}%"></i></div><span class="hint">${CAREER.fmtNum(g.cur, t.money)} / ${CAREER.fmtNum(g.need, t.money)}</span>` : ''}
+        <span class="hint">${secret ? '？？？（在对局中自会知晓）' : CAREER.esc(t.hint)}</span>
+        ${(g && !secret) ? `<div class="cr-bar"><i style="width:${g.pct}%"></i></div><span class="hint">${CAREER.fmtNum(g.cur, t.money)} / ${CAREER.fmtNum(g.need, t.money)}</span>` : ''}
         <span class="cr-rar r${t.rarity}">${r.name}</span></div>`;
     }).join('')}</div>`;
     const STAT_ROWS = [['完成局数', 'games'], ['胜场', 'wins'], ['最长连胜', 'bestStreak'], ['最快夺冠（回合）', 'fastestWin'],
@@ -1892,6 +1896,9 @@ const ui = (() => {
   }
 
   function showGameOver(ranking, humanWon) {
+    /* 净化心灵收尾：改过自新判定并写入诚信档案 —— 必须先于 CAREER.commit（sp_reformed 等成就直接读 df_honor_v1） */
+    let psaEnd = null;
+    try { if (window.PSA && PSA.onMatchEnd) psaEnd = PSA.onMatchEnd(ranking); } catch (e) { psaEnd = null; }
     /* 生涯档案先折叠（新称号立刻体现在排行榜快照与本页徽章上），再记排行榜；两者任何失败都不影响结算 */
     let career = { unlocked: [] };
     try { if (typeof CAREER !== 'undefined') career = CAREER.commit(ranking) || career; } catch (e) { /* ignore */ }
@@ -1904,10 +1911,13 @@ const ui = (() => {
         const face = i === 0 && c.poseCheer ? c.poseCheer : c.avatarImg;
         const st = (G.stats && G.stats[p.idx]) || { rentGot: 0, rentPaid: 0, jailed: 0 };
         const who = p.ai ? '' : (p.name ? `（${p.name}）` : '（你）');
+        const reformed = !!(psaEnd && psaEnd.reformed && psaEnd.reformed.indexOf(p.idx) >= 0);
+        const psaTags = (reformed ? '<span class="bd bd-reform" title="净化心灵后整局再未致人入狱">🌱 改过自新</span>' : '')
+          + (p.honorTag ? `<span class="bd bd-dishonor" title="本局带入的失信标记（初始资金 −20%）">🚫 ${p.honorTag}</span>` : '');
         return `<div class="rank-row ${i === 0 ? 'champ' : ''}">
           <span class="rk-medal">${medals[i] || '🏅'}</span>
           <span class="rk-ava ${i === 0 ? 'rk-cheer' : ''}" style="--pc:${c.color}"><img src="${face}" alt="" draggable="false"></span>
-          <span class="rk-main"><span class="rk-name">${c.name}${who}${(typeof CAREER !== 'undefined') ? CAREER.badgeForSeat(p.idx, { small: true }) : ''}</span>
+          <span class="rk-main"><span class="rk-name">${c.name}${who}${(typeof CAREER !== 'undefined') ? CAREER.badgeForSeat(p.idx, { small: true }) : ''}${psaTags}</span>
             <span class="rk-sub">收租 ${fmt(st.rentGot)} · 缴租 ${fmt(st.rentPaid)} · 入狱 ${st.jailed} 次</span></span>
           <span class="rk-worth">${fmt(netWorth(p))}${p.alive ? '' : ' · 破产'}</span>
         </div>`;
@@ -1921,6 +1931,7 @@ const ui = (() => {
           <button class="btn btn-ghost" id="go-menu">返回主菜单</button>
         </div>`, 'nomax noblock');
       if (humanWon || career.unlocked.length) confetti();
+      if (psaEnd && psaEnd.reformed && psaEnd.reformed.length) toast('🌱 改过自新：净化心灵后再未致人入狱', '🌱');
       if (career.unlocked.length === 1) toast(`🎖️ 称号解锁：${career.unlocked[0].icon} ${career.unlocked[0].name}`, '🎖️');
       else if (career.unlocked.length > 1) toast(`🎖️ 一举解锁 ${career.unlocked.length} 个新称号！`, '🎖️');
       $('#go-again', m.el).onclick = () => { m.close(); res('again'); };
@@ -1959,6 +1970,8 @@ const ui = (() => {
 
   /* 玩家死亡/返回主菜单等场景下，清理所有瞬态等待 */
   function abortTransient() {
+    /* 净化心灵影院遮罩 + 管控态一并拆除（回菜单/重开后不残留锁屏；不计逃避） */
+    try { if (window.PSA && PSA.abort) PSA.abort(); } catch (e) { /* */ }
     if (rollResolver) {
       const r = rollResolver; rollResolver = null;
       $('#btn-roll').classList.remove('show');
