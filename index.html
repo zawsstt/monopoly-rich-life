@@ -370,8 +370,15 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
   /* 图片走渲染器自身的图片缓存（与 CSS 背景 / <img> 共用一份请求），load 后再 decode 保证上屏零解码卡顿 */
   function loadImage(it) {
     return new Promise(function (resolve) {
+      var done = false;
+      var finish = function () { if (!done) { done = true; clearTimeout(to); resolve(); } };
+      var to = setTimeout(function () {
+        /* 后台/被遮挡页面 Image 加载与 decode 可能被浏览器冻结：退回 fetch 暖缓存后放行，
+         * 后续 <img>/CSS 引用走 HTTP 缓存即可（decode 预热是锦上添花，不能阻塞揭幕） */
+        fetch(it.url).catch(function () { /* 缓存预热失败不阻塞 */ });
+        finish();
+      }, 12000);
       var im = new Image();
-      var finish = function () { resolve(); };
       im.onload = function () { if (im.decode) im.decode().then(finish, finish); else finish(); };
       im.onerror = function () { it.failed = true; finish(); };
       im.src = it.url;
