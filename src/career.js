@@ -27,11 +27,14 @@ const CAREER = (() => {
     passStart: 0, flights: 0, blocksSet: 0, blocksHit: 0, demos: 0, propsUsed: 0,
     cards: 0, potWon: 0, luckyHits: 0, sixes: 0,
     bankrupt: 0, resigned: 0, peakMoney: 0, bestWorth: 0,
+    /* 道具体系 2.0 计数器（二期可挂称号：🚛 拆弹专家 sweeps≥10 / 🦝 江洋大盗 steals≥5）+ 致人入狱归因（净化心灵彩蛋） */
+    sweeps: 0, steals: 0, insuredSave: 0, pierce: 0, piggySave: 0, rushes: 0, jailCaused: 0,
   };
-  /* 单局统计（G.stats[seat]）里直接累加进生涯的字段 */
+  /* 单局统计（G.stats[seat]）里直接累加进生涯的字段（jailedBy 为按座位归因的对象，不在此累加） */
   const SUM_KEYS = ['rentGot', 'rentPaid', 'jailed', 'served', 'bail', 'bailCardUsed', 'bought', 'upgrades', 'lv4',
     'auctionWins', 'monopolies', 'passStart', 'flights', 'blocksSet', 'blocksHit', 'demos', 'propsUsed',
-    'cards', 'potWon', 'luckyHits', 'sixes', 'bankrupt', 'resigned'];
+    'cards', 'potWon', 'luckyHits', 'sixes', 'bankrupt', 'resigned',
+    'sweeps', 'steals', 'insuredSave', 'pierce', 'piggySave', 'rushes', 'jailCaused'];
 
   /* 阶梯轨道：tiers = [名称, 阈值, 描述]；rarities 与 tiers 等长，终阶一律传说 */
   const TRACKS = [
