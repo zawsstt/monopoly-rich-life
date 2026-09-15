@@ -62,7 +62,14 @@ const CAREER = (() => {
       ['道具学徒', 5, '累计使用道具 5 次'], ['机关算尽', 30, '累计使用道具 30 次'], ['千术大师', 100, '累计使用道具 100 次']] },
   ];
 
-  /* 特殊成就：未解锁前只显示提示语；prog 可选，返回 [当前, 目标] 用于进度条 */
+  /* 净化心灵彩蛋三枚隐藏成就（DESIGN_PSA_EGG.md §7）：判定直接读诚信档案 localStorage.df_honor_v1（psa.js 维护），
+   * 本模块不依赖 psa.js；缺档案 / 损坏 JSON 一律视为未达成 */
+  function honorState() {
+    try { const h = JSON.parse(localStorage.getItem('df_honor_v1') || 'null'); return (h && typeof h === 'object') ? h : {}; } catch (e) { return {}; }
+  }
+  const HIDDEN_HINT = '？？？（在对局中自会知晓）';
+
+  /* 特殊成就：未解锁前只显示提示语；prog 可选，返回 [当前, 目标] 用于进度条；hidden=true 的隐藏款未解锁时连 hint 也不显示（uix.renderSpecial） */
   const SPECIALS = [
     { id: 'sp_comeback', name: '东山再起', icon: '🔥', rarity: 4, hint: '生涯破产过之后，再度夺冠', cond: s => s.comebackWins >= 1 },
     { id: 'sp_richnight', name: '一夜暴富', icon: '💸', rarity: 3, hint: '单局收租达到 10 万', cond: s => s.bestMatchRent >= 100000, prog: s => [s.bestMatchRent, 100000], money: true },
@@ -80,6 +87,10 @@ const CAREER = (() => {
     { id: 'sp_block', name: '路霸', icon: '🚧', rarity: 2, hint: '放置路障 20 次', cond: s => s.blocksSet >= 20, prog: s => [s.blocksSet, 20] },
     { id: 'sp_peak', name: '首富时刻', icon: '👑', rarity: 3, hint: '单局手握现金 30 万', cond: s => s.peakMoney >= 300000, prog: s => [s.peakMoney, 300000], money: true },
     { id: 'sp_laps', name: '起点常客', icon: '🚩', rarity: 1, hint: '累计经过起点 100 次', cond: s => s.passStart >= 100, prog: s => [s.passStart, 100] },
+    /* —— 净化心灵彩蛋（隐藏款） —— */
+    { id: 'sp_purify', name: '净化心灵', icon: '🕊️', rarity: 4, hidden: true, hint: HIDDEN_HINT, desc: '心灵净化者：同一局致三人入狱，被强制送去净化心灵', cond: () => (honorState().eggSeen | 0) >= 1 },
+    { id: 'sp_dishonor', name: '失信人员', icon: '🚫', rarity: 1, hidden: true, hint: HIDDEN_HINT, desc: '净化心灵中途逃离页面，被记入诚信档案（勿效仿）', cond: () => (honorState().violated | 0) >= 1 },
+    { id: 'sp_reformed', name: '改过自新', icon: '🌱', rarity: 5, hidden: true, hint: HIDDEN_HINT, desc: '净化心灵之后，整局再未致任何人入狱', cond: () => (honorState().reformed | 0) >= 1 },
   ];
 
   const CATALOG = [];
@@ -493,6 +504,32 @@ const CAREER = (() => {
       <path d="M46 16 l1 9 -8 -3z" fill="${PAL.green}"/>
       <line x1="26" y1="14" x2="26" y2="40" stroke="#5a3410" stroke-width="2.4" stroke-linecap="round"/>
       <path d="M27 15 h14 l-4 5 4 5 h-14z" fill="${PAL.red}" stroke="${PAL.redD}" stroke-width="1"/>
+    </g>`,
+    /* 净化心灵：警灯顶上停着一只白鸽 */
+    sp_purify: `<g>
+      <rect x="16" y="34" width="32" height="11" rx="3" fill="#2f6fd6" stroke="#173a75" stroke-width="1.3"/>
+      <rect x="21" y="28" width="22" height="8" rx="2" fill="#dbe9ff" stroke="#173a75" stroke-width="1.1"/>
+      <rect x="28" y="24" width="8" height="5" rx="1" fill="${PAL.red}"/><rect x="28" y="24" width="4" height="5" rx="1" fill="#3d7bff"/>
+      <circle cx="22" cy="46" r="3" fill="#1c1208"/><circle cx="42" cy="46" r="3" fill="#1c1208"/>
+      <path d="M30 20 c-4 -2 -8 -1 -10 2 c4 0 6 1 8 3 c-3 1 -3 4 0 5 c3 0 8 -2 10 -5 c3 1 6 0 7 -2 c-2 0 -4 -1 -5 -2 c1 -3 -2 -6 -5 -5 c-2 0 -4 2 -5 4z" fill="#fff" stroke="#c9d6cf" stroke-width="1"/>
+      <path d="M35 16 c3 -3 7 -3 9 0 c-4 0 -6 2 -8 4z" fill="#eef2f5" stroke="#c9d6cf" stroke-width=".9"/>
+      <circle cx="37.5" cy="18.5" r=".9" fill="#1c1208"/><path d="M40 19 l3 .8 -3 .8z" fill="${PAL.gold}"/>
+    </g>`,
+    /* 失信人员：断裂的信用印章 */
+    sp_dishonor: `<g>
+      <circle cx="32" cy="30" r="15" fill="#3a3f47" stroke="#1a1d22" stroke-width="1.4"/>
+      <circle cx="32" cy="30" r="11" fill="none" stroke="#8d9a95" stroke-width="1.6" stroke-dasharray="6 3"/>
+      <path d="M22 20 L42 40" stroke="${PAL.red}" stroke-width="4" stroke-linecap="round"/>
+      <path d="M27 33 l3 -6 4 5 3 -7" fill="none" stroke="#c9d6cf" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" opacity=".55"/>
+      <path d="M17 42 h30" stroke="#8d9a95" stroke-width="1.2" stroke-dasharray="2 2"/>
+    </g>`,
+    /* 改过自新：嫩芽从栅栏缝里长出 */
+    sp_reformed: `<g>
+      <g stroke="#6f7c8c" stroke-width="2.6" stroke-linecap="round"><line x1="18" y1="20" x2="18" y2="46"/><line x1="46" y1="20" x2="46" y2="46"/><line x1="18" y1="26" x2="46" y2="26"/><line x1="18" y1="40" x2="46" y2="40"/></g>
+      <path d="M32 46 V30" stroke="#3f8f3a" stroke-width="2.6" stroke-linecap="round"/>
+      <path d="M32 36 c-6 -1 -9 -5 -9 -10 c5 0 9 3 9 10z" fill="${PAL.green}" stroke="#2f6b2b" stroke-width="1"/>
+      <path d="M32 32 c6 -1 9 -5 9 -10 c-5 0 -9 3 -9 10z" fill="#8fe39f" stroke="#2f6b2b" stroke-width="1"/>
+      <g fill="${PAL.goldL}"><circle cx="24" cy="16" r="1.4"/><circle cx="40" cy="14" r="1.2"/><circle cx="34" cy="12" r="1"/></g>
     </g>`,
   };
 
