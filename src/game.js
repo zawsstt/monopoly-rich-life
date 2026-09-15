@@ -5,7 +5,7 @@
 
 const G = {
   gameId: 0,
-  players: [],          // {idx, charId, ai, money, pos, alive, inJail, jailTurns, skipNext, shield, forcedDice, bailCards, props:{}}
+  players: [],          // {idx, charId, ai, money, pos, alive, inJail, jailTurns, skipNext, shield, insurance, bailiff, piggy, forcedDice, bailCards, props:{}}
   tiles: [],            // [{owner, level}]
   cur: -1,
   round: 1,
@@ -81,6 +81,7 @@ function newGame(charIds, humanCharId, opts) {
     idx: i, charId: cid, ai: cid !== humanCharId, name: null,
     money: opts.startMoney, pos: 0, alive: true,
     inJail: false, jailTurns: 0, skipNext: 0, shield: false,
+    insurance: false, bailiff: false, piggy: false,   // 道具体系 2.0 一次性状态槽（复用 shield 模式）
     forcedDice: null, bailCards: 0, props: {},
   }));
   /* 自定义名号：人类玩家使用大厅输入的昵称 */
@@ -117,7 +118,10 @@ function newGame(charIds, humanCharId, opts) {
   G.stats = G.players.map(() => ({ rentPaid: 0, rentGot: 0, jailed: 0, bought: 0,
     rentBest: 0, served: 0, bail: 0, bailCardUsed: 0, upgrades: 0, lv4: 0, auctionWins: 0, monopolies: 0,
     passStart: 0, flights: 0, blocksSet: 0, blocksHit: 0, demos: 0, propsUsed: 0, cards: 0, potWon: 0,
-    luckyHits: 0, sixes: 0, bankrupt: 0, resigned: 0, peakMoney: opts.startMoney | 0 }));
+    luckyHits: 0, sixes: 0, bankrupt: 0, resigned: 0, peakMoney: opts.startMoney | 0,
+    /* 道具体系 2.0 计数器（DESIGN_PROPS_V2.md §8）+ 入狱归因（净化心灵彩蛋预留，DESIGN_PSA_EGG.md §2） */
+    sweeps: 0, steals: 0, insuredSave: 0, pierce: 0, piggySave: 0, rushes: 0,
+    jailCaused: 0, jailedBy: {} }));
   /* 生涯档案：本机座位 = 大厅点选角色；展示局(allMax)不计入；matchToken 防同一局重复计入 */
   G.localIdx = G.players.findIndex(p => p.charId === humanCharId);
   G.demoMode = !!opts.allMax;
@@ -365,7 +369,7 @@ async function moveDirect(gid, player, target, { collectSalary = true, fx = null
   ui.updatePlayers();
 }
 
-async function sendToJail(gid, player, { escort = true, cutscene = true, reason = null } = {}) {
+async function sendToJail(gid, player, { escort = true, cutscene = true, reason = null, causer = null } = {}) {
   /* 未指定案由 → 从入狱案由池随机（12 种，多样性） */
   if (!reason && typeof JAIL_CASES !== 'undefined' && JAIL_CASES.length) {
     const cs = JAIL_CASES[Math.floor(Math.random() * JAIL_CASES.length)];
@@ -395,7 +399,16 @@ async function sendToJail(gid, player, { escort = true, cutscene = true, reason 
   player.inJail = true;
   player.jailTurns = 0;
   ui.setTokenHidden(player.idx, true);     // 入狱服刑：该格不显示角色 token，出狱时恢复
-  if (G.stats) G.stats[player.idx].jailed++;
+  if (G.stats) {
+    G.stats[player.idx].jailed++;
+    /* 入狱归因（诬陷卡等「致人入狱」手段）：受害者记 jailedBy[causer]，使用者记 jailCaused
+     * —— 净化心灵彩蛋（DESIGN_PSA_EGG.md）按 jailCaused ≥3 触发，causer===player.idx（自伤）不计 */
+    if (causer != null && causer !== player.idx && G.stats[causer]) {
+      G.stats[causer].jailCaused++;
+      const jb = G.stats[player.idx].jailedBy || (G.stats[player.idx].jailedBy = {});
+      jb[causer] = (jb[causer] || 0) + 1;
+    }
+  }
   ui.updateTile(JAIL_POS);
   SFX.jail();
   ui.toast(`⛓️ ${pname(player)} 被关进了监狱！`, '⛓️');
@@ -636,7 +649,7 @@ async function resolveTile(gid, player, depth) {
           }
         }
       } else {
-        // —— 别人的地：交租（地主在押期间免租） ——
+        // —— 别人的地：交租（地主在押期间免租；在押优先级最高，收租令/护身符均不消耗） ——
         const owner = G.players[st.owner];
         if (owner.inJail) {
           ui.toast(`⛓️ 地主 ${pname(owner)} 正在服刑，${t.name} 本轮免租！`, '⛓️');
@@ -646,18 +659,37 @@ async function resolveTile(gid, player, depth) {
         }
         const rent = seasonRent(rentOf(idx, st.owner, st.level));
         if (player.shield) {
-          player.shield = false;
-          ui.updatePlayers();
-          ui.toast(`🧿 护身符发光，${pname(player)} 免除了 ${fmt(rent)} 租金！`, '🧿');
-          ui.log(`🧿 护身符生效，${pname(player)} 免付租金`, 'good');
-          await sleep(700);
-          break;
+          if (owner.bailiff) {
+            /* 强制收租令击穿护身符：租客仍须付租，双方状态同消（DESIGN_PROPS_V2.md §3 bailiff） */
+            owner.bailiff = false;
+            player.shield = false;
+            if (G.stats) G.stats[owner.idx].pierce++;
+            ui.updatePlayers();
+            ui.floatAt(idx, '📢 击穿护身符', '#ffb347');
+            SFX.bad();
+            ui.toast(`📢 ${pname(owner)} 的强制收租令击穿了 ${pname(player)} 的护身符，照付不误！`, '📢');
+            ui.log(`📢 强制收租令生效：${pname(player)} 的护身符失效，仍须支付 ${t.name} 租金`, 'bad');
+            await sleep(700);
+          } else {
+            player.shield = false;
+            ui.updatePlayers();
+            ui.toast(`🧿 护身符发光，${pname(player)} 免除了 ${fmt(rent)} 租金！`, '🧿');
+            ui.log(`🧿 护身符生效，${pname(player)} 免付租金`, 'good');
+            await sleep(700);
+            break;
+          }
         }
         ui.toast(`💸 踩到 ${pname(owner)} 的 ${t.name}，租金 ${fmt(rent)}`, '💸');
         await sleep(300);
         const rentOk = await charge(player, rent, owner);
         if (gid !== G.gameId) return;
         if (rentOk) ui.tileFx(idx, 'rent');
+        /* 收租令是「下一次收到租金时消耗」：租客没有护身符也照样消耗（押错时机的代价） */
+        if (owner.bailiff) {
+          owner.bailiff = false;
+          ui.updatePlayers();
+          ui.log(`📢 ${pname(owner)} 的强制收租令已随本次收租消耗`, 'info');
+        }
       }
       break;
     }
@@ -790,13 +822,24 @@ async function applyCard(gid, player, card, depth) {
       const q = cands[rnd(cands.length)];
       const owned = BOARD.map((t, i) => ({ t, i })).filter(x => x.t.type === 'prop' && G.tiles[x.i].owner === q.idx && G.tiles[x.i].level > 0);
       const pick = owned[rnd(owned.length)];
-      G.tiles[pick.i].level--;
-      ui.updateTile(pick.i);
-      ui.tileFx(pick.i, 'down');
-      SFX.boom();
-      ui.floatAt(pick.i, '-1层', '#ff6b6b');
-      ui.toast(`🏗️ ${pname(q)} 的 ${pick.t.name} 被拆掉一层`, '🏗️');
-      ui.log(`🏗️ 市政施工：${pname(q)} 的 ${pick.t.name} 被拆除一层`, 'bad');
+      if (q.insurance) {
+        /* 保险单：市政施工也在承保范围（DESIGN_PROPS_V2.md §3 insurance），层数不减、状态消耗 */
+        q.insurance = false;
+        if (G.stats) G.stats[q.idx].insuredSave++;
+        ui.updatePlayers();
+        ui.floatAt(pick.i, '📋 已投保', '#7ad0ff');
+        SFX.card();
+        ui.toast(`📋 市政施工盯上了 ${pname(q)} 的 ${pick.t.name}，保险单生效，建筑毫发无损！`, '📋');
+        ui.log(`📋 保险单生效：${pname(q)} 的 ${pick.t.name} 免于市政施工拆除`, 'good');
+      } else {
+        G.tiles[pick.i].level--;
+        ui.updateTile(pick.i);
+        ui.tileFx(pick.i, 'down');
+        SFX.boom();
+        ui.floatAt(pick.i, '-1层', '#ff6b6b');
+        ui.toast(`🏗️ ${pname(q)} 的 ${pick.t.name} 被拆掉一层`, '🏗️');
+        ui.log(`🏗️ 市政施工：${pname(q)} 的 ${pick.t.name} 被拆除一层`, 'bad');
+      }
     } else {
       ui.log(`🏗️ 市政施工：可惜全城还没有建筑`, 'info');
     }
@@ -1019,6 +1062,8 @@ function releaseAssets(p) {
     if (G.tiles[i].owner === p.idx) { G.tiles[i].owner = null; G.tiles[i].level = 0; }
   });
   for (const k in G.blocks) { if (G.blocks[k] === p.idx) delete G.blocks[k]; }
+  /* 出局卫生：一次性状态槽一并清空（护身符/保险单/收租令/私房钱），避免徽章残留 */
+  p.shield = false; p.insurance = false; p.bailiff = false; p.piggy = false;
   BOARD.forEach((_, i) => ui.updateTile(i));
   ui.renderBlocks();
 }
@@ -1060,28 +1105,134 @@ async function applyPropUse(gid, player, key, arg, byAI) {
     case 'demo': {
       const st = G.tiles[arg];
       if (st.level > 0) {
-        st.level--;
-        if (G.stats) G.stats[player.idx].demos++;
-        ui.updateTile(arg);
-        ui.tileFx(arg, 'down');
-        SFX.boom();
-        ui.floatAt(arg, '-1层', '#ff6b6b');
-        const victim = G.players[st.owner];
-        ui.toast(`💣 ${pname(player)} 拆了 ${charOf(victim)} 的 ${BOARD[arg].name} 一层楼！`, '💣');
-        ui.log(`${who} 使用拆迁令，${pname(victim)} 的 ${BOARD[arg].name} -1层`, 'bad');
+        const owner = st.owner != null ? G.players[st.owner] : null;
+        if (owner && owner.insurance) {
+          /* 保险单硬反制拆迁令：层数不减、状态消耗（守方单次交换小赚） */
+          owner.insurance = false;
+          if (G.stats) G.stats[owner.idx].insuredSave++;
+          ui.updatePlayers();
+          ui.floatAt(arg, '📋 已投保', '#7ad0ff');
+          SFX.card();
+          ui.toast(`📋 ${pname(player)} 的拆迁令被 ${pname(owner)} 的保险单挡下！`, '📋');
+          ui.log(`${who} 使用拆迁令，但 ${pname(owner)} 的 ${BOARD[arg].name} 已投保，毫发无损`, 'good');
+        } else {
+          st.level--;
+          if (G.stats) G.stats[player.idx].demos++;
+          ui.updateTile(arg);
+          ui.tileFx(arg, 'down');
+          SFX.boom();
+          ui.floatAt(arg, '-1层', '#ff6b6b');
+          const victim = G.players[st.owner];
+          ui.toast(`💣 ${pname(player)} 拆了 ${pname(victim)} 的 ${BOARD[arg].name} 一层楼！`, '💣');
+          ui.log(`${who} 使用拆迁令，${pname(victim)} 的 ${BOARD[arg].name} -1层`, 'bad');
+        }
       }
       break;
     }
     case 'equal': {
+      /* 私房钱豁免：持有 piggy 状态者「不参与均摊也不被均摊」，均摊基数与结果都不含他（状态消耗） */
       const alive = alivePlayers();
-      const total = alive.reduce((s, q) => s + q.money, 0);
-      const avg = Math.floor(total / alive.length);
-      alive.forEach(q => { const d = avg - q.money; q.money = avg; ui.moneyFloat(q, d); });
+      const exempt = alive.filter(q => q.piggy);
+      const pool = alive.filter(q => !q.piggy);
+      exempt.forEach(q => {
+        q.piggy = false;
+        if (G.stats) G.stats[q.idx].piggySave++;
+        ui.toast(`🐷 ${pname(q)} 掏出私房钱，现金原封不动！`, '🐷');
+        ui.log(`🐷 私房钱生效，${pname(q)} 不参与均富卡均摊`, 'good');
+      });
+      if (pool.length) {
+        const total = pool.reduce((s, q) => s + q.money, 0);
+        const avg = Math.floor(total / pool.length);
+        pool.forEach(q => { const d = avg - q.money; q.money = avg; ui.moneyFloat(q, d); });
+        ui.toast(`⚖️ 天下大同！参与均摊者现金平均为 ${fmt(avg)}${exempt.length ? '（豁免者除外）' : ''}`, '⚖️');
+        ui.log(`${who} 使用均富卡，${exempt.length ? `${exempt.length} 人豁免，其余` : '全场现金'}平均分配`, 'good');
+      } else {
+        ui.toast(`⚖️ 均富卡落空：其余玩家全部持有私房钱`, '⚖️');
+        ui.log(`${who} 使用均富卡，但无人参与均摊`, 'info');
+      }
       ui.updatePlayers();
       SFX.cash();
-      ui.toast(`⚖️ 天下大同！全场现金平均为 ${fmt(avg)}`, '⚖️');
-      ui.log(`${who} 使用均富卡，全场现金平均分配`, 'good');
       await sleep(800);
+      break;
+    }
+    case 'sweeper': {
+      if (G.blocks[arg] == null) break;   // 目标路障已消失（点选后到执行前被撞毁）：道具照常消耗
+      const by = G.blocks[arg];
+      delete G.blocks[arg];
+      if (G.stats) G.stats[player.idx].sweeps++;
+      ui.updateTile(arg);
+      ui.renderBlocks();
+      SFX.build();
+      ui.floatAt(arg, '🚛 清障', '#8fd3ff');
+      const byName = G.players[by] ? pname(G.players[by]) : '???';
+      ui.toast(`🚛 ${pname(player)} 的清障车铲掉了 ${BOARD[arg].name} 的路障（${byName} 所放）`, '🚛');
+      ui.log(`${who} 使用清障车，移除 ${BOARD[arg].name} 的路障`, 'info');
+      break;
+    }
+    case 'insurance':
+      player.insurance = true;
+      ui.toast(`📋 ${pname(player)} 为名下建筑投了保险（下次被拆免损）`, '📋');
+      ui.log(`${who} 启用保险单（挡下一次拆迁令/市政施工）`, 'good');
+      SFX.card();
+      break;
+    case 'bailiff':
+      player.bailiff = true;
+      ui.toast(`📢 ${pname(player)} 签发了强制收租令（下次收租击穿护身符）`, '📢');
+      ui.log(`${who} 启用强制收租令（下次收租，租客护身符失效）`, 'good');
+      SFX.card();
+      break;
+    case 'piggy':
+      player.piggy = true;
+      ui.toast(`🐷 ${pname(player)} 藏好了私房钱（均富卡均摊时保留原现金）`, '🐷');
+      ui.log(`${who} 启用私房钱（均富卡豁免一次）`, 'good');
+      SFX.card();
+      break;
+    case 'thief': {
+      /* 窃贼卡：随机偷取对手库存 1 件（按件数等概率）；不可偷窃贼卡本身；赃物不受 PROP_MAX 限制。
+       * 随机只在房主侧发生（联机客人只上报受害者意图），见 DESIGN_PROPS_V2.md §6.3 */
+      const victim = G.players[arg];
+      const pool = [];
+      if (victim && victim.alive && victim !== player) {
+        for (const k in victim.props) {
+          if (k === 'thief') continue;
+          for (let n = (victim.props[k] | 0); n > 0; n--) pool.push(k);
+        }
+      }
+      if (!pool.length) { ui.toast(`🦝 ${victim ? pname(victim) : '目标'}身上没有可偷的道具`, '🦝'); break; }
+      const stolenKey = pool[rnd(pool.length)];
+      victim.props[stolenKey]--;
+      if (victim.props[stolenKey] <= 0) delete victim.props[stolenKey];
+      player.props[stolenKey] = (player.props[stolenKey] || 0) + 1;
+      if (G.stats) G.stats[player.idx].steals++;
+      ui.updatePlayers();
+      SFX.cash(); SFX.bad();
+      const SP = PROPS[stolenKey];
+      ui.toast(`🦝 ${pname(player)} 的窃贼从 ${pname(victim)} 处偷走了 ${SP.icon} ${SP.name}！`, '🦝');
+      ui.log(`${who} 使用窃贼卡，偷走 ${pname(victim)} 的 ${SP.name}`, 'bad');
+      break;
+    }
+    case 'rush': {
+      const st = G.tiles[arg];
+      const cap = (G.season && G.season.id === 'build') ? 4 : 3;   // 普通周上限 3 级，建设周可冲 4 级
+      if (BOARD[arg].type !== 'prop' || st.owner !== player.idx || (st.level || 0) >= cap) break;
+      st.level = (st.level || 0) + 1;
+      if (G.stats) G.stats[player.idx].rushes++;
+      ui.updateTile(arg);
+      ui.tileFx(arg, 'up');
+      SFX.build();
+      ui.floatAt(arg, `${LEVEL_NAMES[st.level]}!`, playerColor(player));
+      ui.toast(`🏗️ ${pname(player)} 加急施工，${BOARD[arg].name} 升到 ${LEVEL_NAMES[st.level]}${st.level >= 4 ? '（建设周冲顶）' : ''}！`, '🏗️');
+      ui.log(`${who} 使用加急施工令，${BOARD[arg].name} +1 层（${LEVEL_NAMES[st.level]}）`, 'build');
+      break;
+    }
+    case 'frame': {
+      /* 诬陷卡：选定一名对手 → 走 sendToJail 正常入狱（含逮捕过场/警车押送），
+       * 因果归因记在使用者头上（G.stats[使用者].jailCaused / 受害者.jailedBy） */
+      const victim = G.players[arg];
+      if (!victim || !victim.alive || victim === player || victim.inJail) break;
+      ui.toast(`🕵️ ${pname(player)} 暗中举报了 ${pname(victim)}！`, '🕵️');
+      ui.log(`${who} 使用诬陷卡，${pname(victim)} 遭匿名举报`, 'bad');
+      await sendToJail(gid, victim, { causer: player.idx, reason: '🕵️ 被匿名举报 · 涉嫌重大经济犯罪，押送监狱服刑' });
       break;
     }
   }
