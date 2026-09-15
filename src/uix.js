@@ -1942,7 +1942,12 @@ const ui = (() => {
       if (e.code === 'Space' && !e.repeat) {
         const t = e.target;
         if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;   /* 聊天框/昵称框里打空格不掷骰 */
+        if (document.querySelector('#auction-hall:not(.ah-closing),.modal-mask.show,#cutscene.show,#reconnect.show')) return;   /* 可见覆盖层期间空格交给覆盖层 */
         e.preventDefault(); tryFireRoll();
+      }
+      if (e.code === 'Escape' && !e.repeat) {
+        /* 自救键：清除隐藏残骸覆盖层（正常流程本就会移除，这里防任何路径的残留卡死键位门控） */
+        document.querySelectorAll('#cutscene:not(.show),#reconnect:not(.show),#auction-hall.ah-closing').forEach(function (el) { el.remove(); });
       }
     });
     const syncAudioBtns = () => {
