@@ -278,6 +278,7 @@ const NET = (() => {
         idx: p.idx, charId: p.charId, name: p.name || null, ai: p.ai,
         money: p.money, pos: p.pos, alive: p.alive, inJail: p.inJail,
         jailTurns: p.jailTurns, skipNext: p.skipNext, shield: p.shield,
+        insurance: !!p.insurance, bailiff: !!p.bailiff, piggy: !!p.piggy,   /* 道具体系 2.0 状态槽：客人面板徽章需同步（公开信息） */
         forcedDice: p.forcedDice, bailCards: p.bailCards, props: p.props,
       })),
       tiles: G.tiles.map(t => ({ owner: t.owner, level: t.level })),
