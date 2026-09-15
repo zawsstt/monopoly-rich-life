@@ -1248,6 +1248,9 @@ const V3D = (() => {
    * draw call 与阴影 pass 同比例下降，三角形数与包围盒严格不变（smoke_perf_budget.js 断言）。
    * 保守规则：跳过 Instanced/Skinned/多材质/morph/透明/不可见 mesh；负行列式（镜像）翻转绕序；
    * 只在 dynRoot 地产建筑上使用（特建/角色带运行中动画，不合批）。?nomerge=1 可退回原始层级。 */
+  /* 多棋盘主题：?theme=modern 时地产消费 Props3DModern（现代写实组），默认经典组 */
+  const BOARD_THEME = (typeof location !== 'undefined') ? (new URLSearchParams(location.search).get('theme') || 'classic') : 'classic';
+  window.__boardTheme = BOARD_THEME;
   const MERGE_STATIC = !(typeof location !== 'undefined' &&
     new URLSearchParams(location.search).get('nomerge') === '1');
   const _mInv = new THREE.Matrix4(), _mRel = new THREE.Matrix4(), _nrm = new THREE.Matrix3();
@@ -1346,6 +1349,11 @@ const V3D = (() => {
     try {
       /* img2threejs 个性化地产优先（Props3D[格号](level)），回退参数化工厂 */
       let g = null;
+      if (window.__boardTheme === 'modern' && window.Props3DModern && typeof window.Props3DModern[i] === 'function') {
+        try { g = window.Props3DModern[i](wantLevel); } catch (e) { g = null; }
+        if (g) g.userData.fromModern = true;   /* 主题接管标记（QA/预览用） */
+        if (g && !g.name) g.name = 'prop_' + i + '_modern_lv' + wantLevel;
+      }
       if (window.Props3D && typeof window.Props3D[i] === 'function') {
         try { g = window.Props3D[i](wantLevel); } catch (e) { g = null; }
       }
