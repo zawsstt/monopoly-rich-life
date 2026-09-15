@@ -336,7 +336,8 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
   var painted = -1, raf = 0, CAP = 92;   /* 92% 之后留给脚本执行与首帧排版 */
   function progress() { var got = 0; items.forEach(function (it) { got += it.done ? it.size : Math.min(it.loaded, it.size); }); return totalBytes ? got / totalBytes : 1; }
   function paint() { raf = 0; var pct = Math.round(progress() * CAP); if (pct !== painted && fill) { painted = pct; fill.style.width = Math.max(3, pct) + '%'; } }
-  function schedule() { if (!raf) raf = requestAnimationFrame(paint); }
+  /* 用 setTimeout 驱动进度：后台标签/被遮挡页面 rAF 会被浏览器冻结，rAF 驱动会让加载条冻结甚至永不揭幕 */
+  function schedule() { if (!raf) raf = setTimeout(function () { raf = 0; paint(); }, 60); }
   function setTip(t) { if (tip) tip.textContent = t; }
   function withTimeout(p, ms, onAbort) {
     return new Promise(function (res, rej) {
@@ -434,8 +435,8 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
     return runScripts();
   }).then(function () {
     if (window.__assetsSelfCheck) { try { window.__assetsSelfCheck(); } catch (e) { /* */ } }
-    /* 主菜单先排版上屏一帧再揭开遮罩：用户看到的第一帧就是完整画面 */
-    return new Promise(function (r) { requestAnimationFrame(function () { requestAnimationFrame(r); }); });
+    /* 主菜单先排版上屏（setTimeout 双跳；后台标签 rAF 冻结也不能卡住揭幕） */
+    return new Promise(function (r) { setTimeout(function () { setTimeout(r, 60); }, 60); });
   }).then(function () {
     if (fill) fill.style.width = '100%';
     setTip('加载完成！');
