@@ -114,7 +114,8 @@ function aiChooseProps(p) {
     BOARD.forEach((t, i) => {
       if (t.type !== 'prop' || G.tiles[i].owner !== p.idx || G.tiles[i].level < 3) return;
       const before = (i - 1 + BOARD.length) % BOARD.length;
-      if (G.blocks[before] == null && BOARD[before].type !== 'start') spot = before;
+      if (G.blocks[before] == null && BOARD[before].type !== 'start'
+        && !G.players.some(q => q.alive && q.pos === before)) spot = before;
     });
     if (spot != null) use('block', spot);
   }
