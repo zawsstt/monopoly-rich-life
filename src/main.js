@@ -354,18 +354,31 @@ const main = (() => {
       const rb = document.getElementById('btn-roll');
       if (!rb || !rb.classList.contains('show')) { NET.toSeat(seat, { t: 'ui', fn: 'toast', args: ['只能在掷骰前使用道具', '🚫'] }); return; }
       const gid = G.gameId;
+      /* 道具体系 2.0 白名单（漏改 = 客人静默失败）：
+       *   无目标状态类：shield/equal/insurance/bailiff/piggy
+       *   选格类（房主用 ui.propTargetFilter 同一套规则复核）：block/demo/sweeper/rush
+       *   选人类（房主用 ui.propPlayerFilter 复核；窃贼卡随机偷哪件只在房主侧 rnd）：thief/frame */
+      const STATE_KEYS = ['shield', 'equal', 'insurance', 'bailiff', 'piggy'];
+      const TILE_KEYS = ['block', 'demo', 'sweeper', 'rush'];
+      const PLAYER_KEYS = ['thief', 'frame'];
+      if (PROPS[m.key] && (p.props[m.key] || 0) <= 0) { NET.toSeat(seat, { t: 'ui', fn: 'toast', args: ['你没有这个道具', '🚫'] }); return; }
       if (m.key === 'dice') {
         NET.askSeat(seat, { kind: 'number' }).then(v => {
           if (v != null && G.gameId === gid) useProp(gid, p, 'dice', v);
         });
-      } else if (m.key === 'shield' || m.key === 'equal') {
+      } else if (STATE_KEYS.includes(m.key)) {
         useProp(gid, p, m.key);
-      } else if (m.key === 'block' || m.key === 'demo') {
+      } else if (TILE_KEYS.includes(m.key)) {
         /* 客人已在本地棋盘点选目标格并上报格号；房主用同一套规则复核后执行（不信任客人端） */
         const f = ui.propTargetFilter ? ui.propTargetFilter(m.key, p) : null;
         const arg = m.arg | 0;
         if (f && arg >= 0 && arg < BOARD.length && f(arg)) useProp(gid, p, m.key, arg);
         else NET.toSeat(seat, { t: 'ui', fn: 'toast', args: ['目标格已失效，请重新选择', '🚫'] });
+      } else if (PLAYER_KEYS.includes(m.key)) {
+        /* 客人上报目标座位号；房主复核（存活/非本人/窃贼卡须有可偷库存/诬陷卡目标未在押） */
+        const arg = m.arg | 0;
+        if (ui.propPlayerFilter && arg >= 0 && arg < G.players.length && ui.propPlayerFilter(m.key, p, arg)) useProp(gid, p, m.key, arg);
+        else NET.toSeat(seat, { t: 'ui', fn: 'toast', args: ['目标玩家已失效，请重新选择', '🚫'] });
       } else {
         ui.toast('未知道具指令', '🚫');
       }
