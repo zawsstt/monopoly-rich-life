@@ -146,7 +146,8 @@ const V3D = (() => {
   function applyKeyboardCam(dt) {
     if (!controls || camLocks > 0) return;
     try {
-      if (document.querySelector('#auction-hall,.modal-mask.show,#cutscene,#reconnect')) return;
+      /* 只拦“可见”的覆盖层：#cutscene/#reconnect 结束后仅剩隐藏残骸时不该禁掉键位（用户报告键位全灭的防御性修复） */
+      if (document.querySelector('#auction-hall:not(.ah-closing),.modal-mask.show,#cutscene.show,#reconnect.show')) return;
     } catch (e) { /* ignore */ }
     const up = v3dKeys.KeyW || v3dKeys.ArrowUp, down = v3dKeys.KeyS || v3dKeys.ArrowDown;
     const left = v3dKeys.KeyA || v3dKeys.ArrowLeft, right = v3dKeys.KeyD || v3dKeys.ArrowRight;
