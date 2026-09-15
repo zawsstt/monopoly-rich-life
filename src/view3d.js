@@ -5,7 +5,7 @@
  *   9 栋特殊建筑 / 22×4 地产进化 / 6 位 Q 版角色 / 道具模型。
  * 本文件负责：
  *   - 场景载体（深绿毛毡圆桌 + 木质棋盘 + 边缘马路环 + 40 格奶油地砖）
- *   - 中央区（金色 logo / 奖池金币 / 机会命运牌堆 / 3D 骰子）
+ *   - 中央区（海报桌面 / 奖池金币 / 机会命运牌堆 / 3D 骰子）
  *   - 角色（逐格跳跃 / 行走摆臂 / 待机呼吸 / 骑乘 / 惊慌）
  *   - 相机（45° 俯瞰 + 轨道控制 + 跟随 + 骰子特写）
  *   - 特效（闪光 / 缴租红光 / 购地横幅 / 升级烟花 / 金钱飘字）
@@ -206,7 +206,7 @@ const V3D = (() => {
     /* 角色站位：马路环中心线（模块E）——角色走在路面上，杜绝与建筑/地砖穿模；
      * 多人沿环线切向排开（沿切向偏移不偏离环线） */
     const rp = roadPointOf(i), o = outwardOf(i);
-    const off = n > 1 ? (k - (n - 1) / 2) * 0.66 : 0;
+    const off = n > 1 ? (k - (n - 1) / 2) * 1.12 : 0;   /* ≥最宽角色 1.08（审计 P1：0.66 会人叠人） */
     return {
       x: rp.x + rp.tx * off,
       z: rp.z + rp.tz * off,
@@ -253,9 +253,34 @@ const V3D = (() => {
   function disposeGroup(g) {
     g.traverse(o => {
       if (o.isMesh && o.geometry) { try { o.geometry.dispose(); } catch (e) { /* ignore */ } }
-      if (o.isSprite && o.material && o.material.map) { try { o.material.map.dispose(); } catch (e) { /* ignore */ } }
+      if (o.isSprite && o.material && o.material.map) { try { o.material.map.dispose(); } catch (e) { /* ignore */ }
+        try { o.material.dispose(); } catch (e) { /* ignore */ } }
     });
     if (g.parent) g.parent.remove(g);
+  }
+  /* 深释放（几何 + 材质 + 贴图）：只用于「资产完全私有」的对象——Char3D 精修角色每次实例化都新建材质与 2~4 张 canvas 贴图
+   * （boss：衬衫/马甲/马甲粗糙度/胸针），此前 disposeGroup 只释放几何 → 每次重开泄漏 ~10 张纹理（浏览器 E2E 实测 +9~10/局）。
+   * 不能用于建筑/骑乘车辆/buildings3d 回退角色：它们的工厂有模块级材质或纹理缓存（police_car _texCache、buildings3d _matCache），
+   * 释放后下一次实例化会拿到已销毁的贴图。 */
+  const TEX_SLOTS = ['map', 'emissiveMap', 'roughnessMap', 'metalnessMap', 'normalMap', 'alphaMap', 'bumpMap', 'aoMap', 'lightMap', 'specularMap'];
+  function disposeDeep(g) {
+    if (!g) return;
+    const mats = new Set();
+    g.traverse(o => {
+      if (o.isMesh && o.geometry) { try { o.geometry.dispose(); } catch (e) { /* ignore */ } }
+      if ((o.isMesh || o.isSprite) && o.material) {
+        if (Array.isArray(o.material)) o.material.forEach(m => mats.add(m)); else mats.add(o.material);
+      }
+    });
+    mats.forEach(m => {
+      TEX_SLOTS.forEach(k => { const t = m[k]; if (t && t.isTexture) { try { t.dispose(); } catch (e) { /* ignore */ } } });
+      try { m.dispose(); } catch (e) { /* ignore */ }
+    });
+    if (g.parent) g.parent.remove(g);
+  }
+  function disposeRig(rig) {
+    if (!rig || !rig.group) return;
+    if (rig.privateAssets) disposeDeep(rig.group); else disposeGroup(rig.group);
   }
   function shadowDirty() {
     if (renderer && renderer.shadowMap) renderer.shadowMap.needsUpdate = true;
@@ -846,72 +871,40 @@ const V3D = (() => {
 
   /* ---------- 中央毛毡区（11×7 格） ---------- */
   function buildCenterFelt() {
+    /* 毛毡顶面＝海报画布（先纯色，图载入后 cover 重绘）：海报即桌面本身，
+     * 不再叠任何共面贴片（旧版海报片+0.06/logo 片+0.09/金环+0.012 三层近共面是中央边缘闪烁的根源）。
+     * 画布 1536x980 与毡面 33.2x21.2 同比例，全铺覆盖（用户要求）。 */
+    const FELT_C = '#0d4d39';
+    const cv = document.createElement('canvas');
+    cv.width = 1536; cv.height = Math.round(1536 * 21.2 / 33.2);
+    const c = cv.getContext('2d');
+    c.fillStyle = FELT_C; c.fillRect(0, 0, cv.width, cv.height);
+    const feltTex = new THREE.CanvasTexture(cv);
+    feltTex.encoding = THREE.sRGBEncoding;
+    if (typeof Image === 'function') {          /* node 冒烟桩无 Image：保持纯色顶面即可 */
+      const img = new Image();
+      img.onload = function () {
+        const ia = img.width / img.height;
+        const dw = Math.max(cv.width, cv.height * ia), dh = dw / ia;
+        c.drawImage(img, (cv.width - dw) / 2, (cv.height - dh) / 2, dw, dh);
+        feltTex.needsUpdate = true;
+      };
+      img.src = 'assets/img/scene_poster.jpg';
+    }
+    const feltSide = matStd(FELT_C, { rough: 0.96 });
     const felt = new THREE.Mesh(
       new THREE.BoxGeometry(33.2, 0.12, 21.2),
-      matStd('#0d4d39', { rough: 0.96 }));
+      [feltSide, feltSide, new THREE.MeshStandardMaterial({ map: feltTex, roughness: 0.9 }), feltSide, feltSide, feltSide]);
     felt.position.y = TILE_TOP - 0.06;
     felt.receiveShadow = true;
     staticRoot.add(felt);
-    /* 金色装饰环 */
-    const ring = new THREE.Mesh(
-      new THREE.RingGeometry(6.0, 6.3, 64),
-      new THREE.MeshBasicMaterial({ color: 0xc9a04c, transparent: true, opacity: 0.4 }));
-    ring.rotation.x = -Math.PI / 2;
-    ring.position.set(0, TILE_TOP + 0.012, 0);
-    staticRoot.add(ring);
   }
 
   /* ---------- 中央陈设：logo / 奖池金币 / 牌堆 ---------- */
   function buildCenterDecor() {
-    /* 大富翁金色 logo（Canvas 平铺；文字实测适配画布，杜绝两端裁切） */
-    const cv = document.createElement('canvas');
-    cv.width = 1600; cv.height = 400;
-    const c = cv.getContext('2d');
-    const grad = c.createLinearGradient(0, 60, 0, 320);
-    grad.addColorStop(0, '#ffe9a8'); grad.addColorStop(0.55, '#f0b429'); grad.addColorStop(1, '#a86a05');
-    c.textAlign = 'center'; c.textBaseline = 'middle';
-    const TXT = '大富翁 · 富贵人生';
-    let fs = 230;
-    c.font = '900 ' + fs + 'px "Microsoft YaHei","PingFang SC",sans-serif';
-    while (c.measureText(TXT).width > cv.width * 0.88 && fs > 60) {
-      fs -= 10;
-      c.font = '900 ' + fs + 'px "Microsoft YaHei","PingFang SC",sans-serif';
-    }
-    c.lineWidth = Math.max(10, fs * 0.09); c.strokeStyle = '#5f3c00';
-    c.strokeText(TXT, cv.width / 2, 170);
-    c.fillStyle = grad;
-    c.fillText(TXT, cv.width / 2, 170);
-    c.font = '600 ' + Math.round(fs * 0.3) + 'px sans-serif';
-    c.fillStyle = '#bfd8c4';
-    c.fillText('M O N O P O L Y', cv.width / 2, 340);
-    const logo = new THREE.Mesh(
-      new THREE.PlaneGeometry(16, 4),
-      new THREE.MeshBasicMaterial({ map: canvasTexture(cv), transparent: true, opacity: 0.92 }));
-    logo.rotation.x = -Math.PI / 2;
-    logo.position.set(0, TILE_TOP + 0.02, -6.6);
-    staticRoot.add(logo);
-
-    /* 中央角色海报（生图合成六主角，半透明铺在毛毡中央） */
-    try {
-      const ptex = new THREE.TextureLoader().load('assets/img/scene_poster.png');
-      ptex.encoding = THREE.sRGBEncoding;
-      const PW = 32.6, PH = 20.6;               /* 毡面 33.2x21.2 内缩留边 */
-      const imgA = 1536 / 1024, planeA = PW / PH;
-      if (imgA < planeA) {                       /* 图偏瘦：裁上下（cover） */
-        ptex.repeat.set(1, imgA / planeA); ptex.offset.set(0, (1 - imgA / planeA) / 2);
-      } else {                                    /* 图偏胖：裁左右 */
-        ptex.repeat.set(planeA / imgA, 1); ptex.offset.set((1 - planeA / imgA) / 2, 0);
-      }
-      ptex.wrapS = ptex.wrapT = THREE.ClampToEdgeWrapping;
-      const poster = new THREE.Mesh(
-        new THREE.PlaneGeometry(PW, PH),
-        new THREE.MeshBasicMaterial({ map: ptex, transparent: false, opacity: 1.0 }));
-      poster.rotation.x = -Math.PI / 2;
-      poster.position.set(0, TILE_TOP + 0.06, 0);        poster.renderOrder = 1;        poster.material.polygonOffset = true; poster.material.polygonOffsetFactor = -4; poster.material.polygonOffsetUnits = -4;
-      staticRoot.add(poster);
-      logo.position.set(0, TILE_TOP + 0.09, 8.4);   /* 海报下方空白带正上方，高于海报面 */   /* 游戏名挪到海报下方空白带 */
-      logo.scale.set(0.72, 0.72, 1);
-    } catch (e) { window.__errs && window.__errs.push('poster: ' + e.message); }
+    /* 海报已烘入毛毡顶面（buildCenterFelt）；桌面平贴 3D 标题已移除——
+     * 平贴文字在 360° 自由视角下绝大多数角度不可读（用户反馈），品牌标识由 HUD 顶栏承载。
+     * 金币堆/牌堆原位保留（均坐落在 TILE_TOP＝毡面顶）。 */
 
     /* 奖池金币堆 */
     potPile = new THREE.Group();
@@ -1173,6 +1166,22 @@ const V3D = (() => {
     } catch (e) { /* ignore */ }
     return '#ffffff';
   }
+  /* 归属旗避位用的建筑外包盒缓存（key = 格号:等级；建筑重建即换 key，无需失效） */
+  const _flagFp = {};
+  function flagFootprint(i) {
+    const bld = buildings[i];
+    if (!bld) return null;
+    const lv = (typeof G !== 'undefined' && G.tiles && G.tiles[i]) ? (G.tiles[i].level | 0) : 0;
+    const key = i + ':' + lv;
+    if (_flagFp[key] !== undefined) return _flagFp[key];
+    let out = null;
+    try {
+      const box = new THREE.Box3().setFromObject(bld);
+      out = { minX: box.min.x, maxX: box.max.x, minZ: box.min.z, maxZ: box.max.z };
+    } catch (e) { out = null; }
+    _flagFp[key] = out;
+    return out;
+  }
   function syncFlag(i, st) {
     if (st.owner == null) {
       if (flags[i]) { disposeGroup(flags[i].group); flags[i] = null; }
@@ -1182,6 +1191,21 @@ const V3D = (() => {
     if (!flags[i]) {
       const o = outwardOf(i), w = worldOf(i);
       const lat = { x: o.z, z: -o.x };
+      /* 旗杆避位（审计 P1：固定对角 1.02 在 11/22 格插进 lv4 大楼）：4 对角 × 2 半径候选，
+       * 选距本格建筑 footprint 最远者（二维点到矩形距离；建筑外包盒按 格号:等级 缓存） */
+      let bestX = o.x * 1.02 + lat.x * 1.02, bestZ = o.z * 1.02 + lat.z * 1.02, bestD = -1;
+      const fp = flagFootprint(i);
+      for (const sx of [1, -1]) for (const sz of [1, -1]) for (const r of [1.02, 1.34]) {
+        const px = o.x * r * sx + lat.x * r * sz;
+        const pz = o.z * r * sx + lat.z * r * sz;
+        let d = 9;
+        if (fp) {
+          const dx = Math.max(fp.minX - (w.x + px), 0, (w.x + px) - fp.maxX);
+          const dz = Math.max(fp.minZ - (w.z + pz), 0, (w.z + pz) - fp.maxZ);
+          d = Math.hypot(dx, dz);
+        }
+        if (d > bestD) { bestD = d; bestX = px; bestZ = pz; }
+      }
       const g = new THREE.Group();
       const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.05, 1.15, 8),
         matStd('#d8c9a3', { rough: 0.5 }));
@@ -1200,7 +1224,7 @@ const V3D = (() => {
       flag.castShadow = true;
       pivot.add(flag);
       g.add(pivot);
-      g.position.set(w.x + o.x * 1.02 + lat.x * 1.02, TILE_TOP, w.z + o.z * 1.02 + lat.z * 1.02);
+      g.position.set(w.x + bestX, TILE_TOP, w.z + bestZ);
       g.userData.tileIdx = i;
       dynRoot.add(g);
       flags[i] = { group: g, pivot, owner: st.owner };
@@ -1379,8 +1403,8 @@ const V3D = (() => {
         if (hasHifi) { try { g = window.Special3D.roadblock(); } catch (e) { g = null; } }
         if (!g && B && B.props && typeof B.props.roadblock === 'function') g = B.props.roadblock();
         if (!g) continue;
-        const rp = roadPointOf(idx);   /* 路障压在马路环行走线上（角色被拦处） */
-        g.position.set(rp.x, ROAD_TOP_Y, rp.z);
+        const rp = roadPointOf(idx);   /* 面板立在行进向前方 0.9（角色停在面板之前，不再与站位同点穿模） */
+        g.position.set(rp.x + rp.tx * 0.9, ROAD_TOP_Y, rp.z + rp.tz * 0.9);
         g.rotation.y = Math.atan2(rp.tx, rp.tz);   /* 模型 +z=行进向，面板自然横跨路面 */
         g.userData.tileIdx = idx;
         g.traverse(o => { if (o.isMesh) o.castShadow = true; });
@@ -1436,12 +1460,13 @@ const V3D = (() => {
     return g;
   }
   function buildTokens() {
-    tokens.forEach(rig => disposeGroup(rig.group));
+    tokens.forEach(rig => disposeRig(rig));
     tokens.clear();
     if (typeof G === 'undefined' || !G.players) return;
     for (const p of G.players) {
       const c = charOfSafe(p);
       let model = null;
+      let privateAssets = false;
       const B = window.Building3D;
       /* 精细角色优先（img2threejs 管线产物 Char3D），?legacychar=1 回退程序化角色 */
       const useLegacy = (typeof location !== 'undefined' &&
@@ -1449,8 +1474,8 @@ const V3D = (() => {
       if (!useLegacy) {
         try {
           const C3 = window.Char3D;
-          if (C3 && typeof C3[p.charId] === 'function') model = C3[p.charId]();
-        } catch (e) { model = null; }
+          if (C3 && typeof C3[p.charId] === 'function') { model = C3[p.charId](); privateAssets = !!model; }
+        } catch (e) { model = null; privateAssets = false; }
       }
       if (!model) {
         try {
@@ -1478,7 +1503,7 @@ const V3D = (() => {
       tokenRoot.add(group);
       const parts = (model.userData && model.userData.parts) || null;
       tokens.set(p.idx, {
-        group, model, parts,
+        group, model, parts, privateAssets,
         mode: 'idle', phase: Math.random() * 6, targetRotY: stand.rot,
         panic: false, ride: null, dead: false,
       });
@@ -1594,7 +1619,7 @@ const V3D = (() => {
       rig.group.position.y = ROAD_TOP_Y * (1 - kk) - 0.55 * kk;
       const s = Math.max(0.001, 1 - kk * 0.85);
       rig.group.scale.setScalar(s);
-    }).then(() => disposeGroup(rig.group)).then(() => { tokens.delete(p.idx); shadowDirty(); });
+    }).then(() => disposeRig(rig)).then(() => { if (tokens.get(p.idx) === rig) tokens.delete(p.idx); shadowDirty(); });
     shadowDirty();
   }
 
@@ -1621,10 +1646,11 @@ const V3D = (() => {
    *   rawLen = max(size.x, size.z)——车/机身长轴（兼容 Special3D.jet +z 机头与旧工厂 +x 机头两种朝向）
    *   police：车长归一 3.2（≈1 条格子边，杜绝"压三格"），车轮贴马路路面（世界 minY≈ROAD_TOP_Y+0.04，
    *           与角色站位同层），mount = 车顶 max.y·s（车顶坐人 ≈ 车高）
-   *   plane ：机身长归一 4.6，腹部离地 TILE_TOP+0.55 巡航（高于路面不铲地砖），mount = 机身高×0.6（坐进机身） */
+   *   plane ：机身长归一 4.6，腹部离地 TILE_TOP+3.2 巡航——lv4 楼顶最高 y≈4.16，翼展 4.33
+   *           半幅 2.16 扫过的格子必须整个从楼顶上方飞过（穿模审计 P0：原 +0.55 会削过 6/6 格 lv4） */
   const RIDE_TARGET_LEN = { police: 3.2, plane: 4.6 };
   const RIDE_GROUND_Y = ROAD_TOP_Y + 0.04;   /* 模块E：车轮从桌面层(0.04)抬到马路路面层 */
-  const RIDE_FLY_BELLY = TILE_TOP + 0.55;
+  const RIDE_FLY_BELLY = TILE_TOP + 3.2;
   function fitRide(g, isPolice) {
     const kind = isPolice ? 'police' : 'plane';
     let s = isPolice ? 2.6 : 2.5;                       // Box3 不可用时的兜底（旧行为）
@@ -2362,11 +2388,13 @@ const V3D = (() => {
         }
       }
 
-      /* 工厂内置动画（喷泉 / 时钟 / 霓虹 / 警灯…） */
+      /* 工厂内置动画（喷泉 / 时钟 / 霓虹 / 警灯…）+ 角色待机微动画（呼吸/眨眼/豆豆屏幕滚动…）。
+       * 此前只驱动 staticRoot/fxRoot，tokenRoot 下角色的 userData.anim 从未执行（tu/doudou v3 交付时发现）。 */
       const B = window.Building3D;
       if (B && typeof B.runAnims === 'function') {
         B.runAnims(staticRoot, worldT, dt);
         B.runAnims(fxRoot, worldT, dt);
+        B.runAnims(tokenRoot, worldT, dt);
       }
 
       /* 运动中的帧才刷新阴影贴图（静态场景性能优化） */
@@ -2404,6 +2432,8 @@ const V3D = (() => {
 
   /* ================= 对局场景初始化 / 重置 ================= */
   function abortTransient() {
+    /* 挂起的 tween 直接丢弃、不 resolve：rollDice / flyoverIntro 是多段 await 链，若放行当前段，
+     * 后续段会继续在新一局的共享对象（骰子/相机）上播放；被作废流程永久挂起是这里的正确语义 */
     anims.length = 0;
     camLocks = 0;
     diceRolling = false;
@@ -2412,14 +2442,26 @@ const V3D = (() => {
     flashList.length = 0;
     try { setPickable(null); } catch (e) { /* ignore */ }
     if (fxRoot) {
-      while (fxRoot.children.length) fxRoot.remove(fxRoot.children[0]);
+      /* 瞬态特效（横幅 Sprite 的 canvas 纹理 / 光环 / 粒子 / 骑乘车辆）中途打断也要释放 GPU 资源：此前只 remove 不 dispose */
+      while (fxRoot.children.length) disposeGroup(fxRoot.children[0]);
     }
     if (controls) { controls.enabled = true; }
     if (dice) dice.position.set(DICE_HOME.x, TILE_TOP + 0.65, DICE_HOME.z);
   }
+  /* 完全私有的小对象（高亮环/幸运环）：几何与材质都不与工厂共享，可一并释放 */
+  function disposeOwned(g) {
+    if (!g) return;
+    g.traverse(o => {
+      if (o.isMesh) {
+        try { if (o.geometry) o.geometry.dispose(); } catch (e) { /* ignore */ }
+        try { if (o.material && !Array.isArray(o.material)) o.material.dispose(); } catch (e) { /* ignore */ }
+      }
+    });
+    if (g.parent) g.parent.remove(g);
+  }
   function resetDynamic() {
     abortTransient();
-    tokens.forEach(rig => disposeGroup(rig.group));
+    tokens.forEach(rig => disposeRig(rig));
     tokens.clear();
     for (let i = 0; i < buildings.length; i++) {
       if (buildings[i]) { disposeGroup(buildings[i].group); buildings[i] = null; }
@@ -2429,6 +2471,9 @@ const V3D = (() => {
     }
     blockMeshes.forEach(g => disposeGroup(g));
     blockMeshes.clear();
+    /* 每局重建的常驻环此前只从 dynRoot 移除、从未 dispose → 每次重开泄漏 3 几何 + 3 材质 */
+    disposeOwned(activeRing); activeRing = null;
+    disposeOwned(luckyRing); luckyRing = null;
     if (dynRoot) while (dynRoot.children.length) dynRoot.remove(dynRoot.children[0]);
     if (tokenRoot) while (tokenRoot.children.length) tokenRoot.remove(tokenRoot.children[0]);
     /* dynRoot 清空后需重建常驻对象 */
@@ -2492,6 +2537,8 @@ const V3D = (() => {
     get scene() { return scene; },
     get camera() { return camera; },
     get controls() { return controls; },
+    /* 只读：renderer.info.memory（geometries/textures）供重开泄漏回归断言 */
+    get renderer() { return renderer; },
   };
 })();
 
