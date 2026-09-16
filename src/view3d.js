@@ -469,12 +469,13 @@ const V3D = (() => {
     }
     function touchDown(e, fromOverlay) {
       if (!self.enabled) return;
-      touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      const sp = toStage(e.clientX, e.clientY);
+      touches.set(e.pointerId, { x: sp.x, y: sp.y });
       if (!fromOverlay) { try { if (dom.setPointerCapture) dom.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ } }
       if (touches.size === 1) {
         dragging = true;
         touchOrbitId = e.pointerId;
-        lx = e.clientX; ly = e.clientY;
+        lx = sp.x; ly = sp.y;
       } else {
         /* 第二根手指落下 → 单指轨道切捏合/平移（丢掉旋转残余，避免跳变） */
         dragging = true;
@@ -485,12 +486,13 @@ const V3D = (() => {
     function touchMove(e) {
       const p = touches.get(e.pointerId);
       if (!p || !self.enabled) return;
-      p.x = e.clientX; p.y = e.clientY;
+      const sp = toStage(e.clientX, e.clientY);
+      p.x = sp.x; p.y = sp.y;
       if (touches.size >= 2) { pinchDirty = true; return; }
       if (touchOrbitId !== e.pointerId) return;
-      des.theta -= (e.clientX - lx) * 0.0052;
-      des.phi = Math.min(self.maxPolarAngle, Math.max(self.minPolarAngle, des.phi - (e.clientY - ly) * 0.0038));
-      lx = e.clientX; ly = e.clientY;
+      des.theta -= (sp.x - lx) * 0.0052;
+      des.phi = Math.min(self.maxPolarAngle, Math.max(self.minPolarAngle, des.phi - (sp.y - ly) * 0.0038));
+      lx = sp.x; ly = sp.y;
       self.gestureStats.orbit++;
     }
     function touchUp(e) {
@@ -556,7 +558,7 @@ const V3D = (() => {
     /* 鼠标路径（保持原行为）：button 0 按下拖拽轨道；touch 走上面的触控路径 */
     dom.addEventListener('pointerdown', e => {
       if (e.pointerType === 'touch') { touchDown(e); return; }
-      if (e.button === 0) { dragging = true; lx = e.clientX; ly = e.clientY; }
+      if (e.button === 0) { dragging = true; const sp = toStage(e.clientX, e.clientY); lx = sp.x; ly = sp.y; }
     });
     window.addEventListener('pointerup', e => {
       if (e.pointerType === 'touch') { touchUp(e); return; }
@@ -574,9 +576,10 @@ const V3D = (() => {
     window.addEventListener('pointermove', e => {
       if (e.pointerType === 'touch') { touchMove(e); return; }
       if (!dragging || !self.enabled) return;
-      des.theta -= (e.clientX - lx) * 0.0052;
-      des.phi = Math.min(self.maxPolarAngle, Math.max(self.minPolarAngle, des.phi - (e.clientY - ly) * 0.0038));
-      lx = e.clientX; ly = e.clientY;
+      const sp = toStage(e.clientX, e.clientY);
+      des.theta -= (sp.x - lx) * 0.0052;
+      des.phi = Math.min(self.maxPolarAngle, Math.max(self.minPolarAngle, des.phi - (sp.y - ly) * 0.0038));
+      lx = sp.x; ly = sp.y;
     });
     dom.addEventListener('wheel', e => {
       e.preventDefault();
@@ -2372,14 +2375,35 @@ const V3D = (() => {
   }
 
   /* ================= 投影 ================= */
+  /* ---------- 强制横屏舞台坐标（main.js 在触屏竖屏时加 body.force-land：整个 body 顺时针转 90°，锚在视口右上）----------
+   * 舞台点 (lx, ly) 落在视口 (innerWidth − ly, lx)，故视口 → 舞台：x = clientY, y = innerWidth − clientX。
+   * 所有 clientX/Y 进入 3D 层前先过 toStage；元素矩形用 elStageRect（布局尺寸不受 transform 影响，
+   * 舞台左上角 = 视口 AABB 的右上角）。未旋转时两者与原生坐标完全一致。 */
+  function stageRotated() {
+    try { return document.body.classList.contains('force-land'); } catch (e) { return false; }
+  }
+  function toStage(vx, vy) {
+    return stageRotated() ? { x: vy, y: (window.innerWidth || 0) - vx } : { x: vx, y: vy };
+  }
+  function elStageRect(el) {
+    const r = el.getBoundingClientRect();
+    if (!stageRotated()) return { left: r.left, top: r.top, width: r.width, height: r.height };
+    const tl = toStage(r.right, r.top);
+    return { left: tl.x, top: tl.y, width: el.clientWidth || r.height, height: el.clientHeight || r.width };
+  }
+  function ndcOf(el, clientX, clientY) {
+    const sr = elStageRect(el);
+    const p = toStage(clientX, clientY);
+    return new THREE.Vector2(((p.x - sr.left) / sr.width) * 2 - 1, -((p.y - sr.top) / sr.height) * 2 + 1);
+  }
   function project(x, y, z) {
     if (!camera || !renderer) return null;
     const v = new THREE.Vector3(x, y, z);
     v.project(camera);
-    const rect = renderer.domElement.getBoundingClientRect();
+    const sr = elStageRect(renderer.domElement);
     return {
-      x: rect.left + (v.x * 0.5 + 0.5) * rect.width,
-      y: rect.top + (-v.y * 0.5 + 0.5) * rect.height,
+      x: sr.left + (v.x * 0.5 + 0.5) * sr.width,
+      y: sr.top + (-v.y * 0.5 + 0.5) * sr.height,
       behind: v.z > 1,
     };
   }
@@ -2437,6 +2461,7 @@ const V3D = (() => {
       'body.v3d-on #board .tile{visibility:hidden!important}' +
       'body.v3d-on #table-decor,body.v3d-on #tokens,body.v3d-on #blocks{display:none!important}' +
       /* 中央区：3D 场景已有 logo/金币/牌堆，DOM 只保留功能 HUD（新闻/浮层/状态/掷骰）。
+       * 桌面：#board-center 仍是 #board 网格的中央区子项（grid-area 2/2/9/13），HUD 落在中央毡面——用户验收过的布局，保持。
        * #dice-wrap（2D CSS 骰子）保留显示：与 3D 骰子并行摇→定格，保证点数在 HUD 可读 */
       'body.v3d-on #board-center{left:0!important;top:0!important;width:100%!important;height:100%!important;background:none!important;box-shadow:none!important;display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:flex-start!important;gap:10px!important;padding:14px 0 22px!important;pointer-events:none!important}' +
       'body.v3d-on #board-center .ribbon-band,body.v3d-on #board-center .bc-brand,body.v3d-on #board-center .bc-decks{display:none!important}' +
@@ -2446,6 +2471,14 @@ const V3D = (() => {
       'body.v3d-on #board-center .bc-action{background:none!important;box-shadow:none!important;border:none!important;pointer-events:auto!important;align-items:center!important;margin-top:auto!important}' +
       'body.v3d-on #btn-roll{pointer-events:auto}' +
       'body.v3d-on #board-wrap{overflow:hidden}' +
+      /* 矮舞台（手机横屏 / 强制横屏，html.stage-short）：中央区只有 ~680×220，一摞 HUD 会压在棋盘正中并把掷骰按钮挤出下边被裁。
+       * 让 #board-center 脱离网格区（grid-area:auto —— 规范里带网格定位的绝对定位子项以网格区为包含块，inset:0 也只铺到中央区）
+       * 真正铺满画布；状态匾额挪到画布顶部居中（.bc-action 置 static，否则它的 position:relative 会把匾额吸在底部）；
+       * 底部只留「骰子 + 掷骰」一行并排，不再挡住跟随视角里的角色；视角按钮同步收小 */
+      'html.stage-short body.v3d-on #board-center{grid-area:auto!important;position:absolute!important;inset:0!important;margin:0!important;padding:8px 0 calc(8px + var(--sa-b, 0px))!important}' +
+      'html.stage-short body.v3d-on #board-center .bc-action{position:static!important;flex-direction:row!important;align-items:center!important;gap:14px!important;margin-bottom:2px!important;padding-bottom:0!important}' +
+      'html.stage-short body.v3d-on #board-center #center-status{position:absolute!important;top:6px!important;left:50%!important;transform:translateX(-50%)!important;margin:0!important;max-width:min(62%,520px)!important}' +
+      'html.stage-short .v3d-cam-btn{top:8px;right:10px;padding:6px 10px;font-size:12px}' +
       '.v3d-cam-btn{position:absolute;top:14px;right:14px;z-index:40;pointer-events:auto;padding:8px 14px;border-radius:10px;border:1px solid rgba(240,180,41,.55);background:linear-gradient(180deg,rgba(10,40,26,.92),rgba(6,26,16,.92));color:#ffe9a8;font:700 13px "Microsoft YaHei",sans-serif;letter-spacing:1px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.35)}' +
       '.v3d-cam-btn:hover{border-color:#f0b429;background:linear-gradient(180deg,rgba(24,66,42,.95),rgba(10,36,22,.95))}';
     document.head.appendChild(st);
@@ -2469,7 +2502,8 @@ const V3D = (() => {
         if (touchIds.size > 1) touchMulti = true;
       }
       /* t=处理时刻兜底；ts=输入时刻（event.timeStamp）——主线程卡顿时短按不会被误判为长按 */
-      down = { x: e.clientX, y: e.clientY, t: performance.now(), ts: evTs(e), touch: isTouch, id: e.pointerId };
+      const sp = toStage(e.clientX, e.clientY);
+      down = { x: sp.x, y: sp.y, t: performance.now(), ts: evTs(e), touch: isTouch, id: e.pointerId };
       /* 用户接管相机：从当前机位续接球坐标（follow 模式借此暂停跟随驱动且不弹回预设位） */
       beginUserOrbit();
     });
@@ -2492,7 +2526,8 @@ const V3D = (() => {
       const d = down;
       down = null;
       markUserOrbit();
-      const moved = Math.hypot(e.clientX - d.x, e.clientY - d.y);
+      const up = toStage(e.clientX, e.clientY);
+      const moved = Math.hypot(up.x - d.x, up.y - d.y);
       if (moved > (d.touch ? MOVE_TOUCH : MOVE_MOUSE)) return;
       if (d.touch) {
         const upTs = evTs(e);
@@ -2501,11 +2536,7 @@ const V3D = (() => {
         if (dur > TAP_MS || multiNow || touchIds.size > 0) return;
       }
       if (e.target !== el) return;
-      const rect = el.getBoundingClientRect();
-      const ndc = new THREE.Vector2(
-        ((e.clientX - rect.left) / rect.width) * 2 - 1,
-        -((e.clientY - rect.top) / rect.height) * 2 + 1);
-      pickAt(ndc, d.touch);
+      pickAt(ndcOf(el, e.clientX, e.clientY), d.touch);
     });
     window.addEventListener('pointercancel', e => {
       if (e.pointerType === 'touch') {
@@ -2524,11 +2555,7 @@ const V3D = (() => {
       const now = performance.now();
       if (now - lastHoverCast < 60) return;
       lastHoverCast = now;
-      const rect = el.getBoundingClientRect();
-      const ndc = new THREE.Vector2(
-        ((e.clientX - rect.left) / rect.width) * 2 - 1,
-        -((e.clientY - rect.top) / rect.height) * 2 + 1);
-      hoverIdx = castTile(ndc);
+      hoverIdx = castTile(ndcOf(el, e.clientX, e.clientY));
       el.style.cursor = hoverIdx >= 0 ? 'pointer' : 'grab';
     });
     el.addEventListener('pointerleave', () => { hoverIdx = -1; });
@@ -2557,9 +2584,9 @@ const V3D = (() => {
   function castTileTouch(ndc) {
     let i = castTile(ndc);
     if (i >= 0 || !renderer) return i;
-    const rect = renderer.domElement.getBoundingClientRect();
-    if (!rect || rect.width < 1 || rect.height < 1) return -1;
-    const dx = TOUCH_PICK_R / rect.width * 2, dy = TOUCH_PICK_R / rect.height * 2;
+    const sr = elStageRect(renderer.domElement);
+    if (!sr || sr.width < 1 || sr.height < 1) return -1;
+    const dx = TOUCH_PICK_R / sr.width * 2, dy = TOUCH_PICK_R / sr.height * 2;
     for (const o of TOUCH_PICK_OFFS) {
       i = castTile(new THREE.Vector2(ndc.x + o[0] * dx, ndc.y - o[1] * dy));
       if (i >= 0) return i;
@@ -2732,10 +2759,12 @@ const V3D = (() => {
 
   function resize() {
     if (!renderer || !container) return;
-    const rect = container.getBoundingClientRect();
-    if (rect.width < 10 || rect.height < 10) return;
-    renderer.setSize(rect.width, rect.height, false);
-    camera.aspect = rect.width / rect.height;
+    /* 布局尺寸而非 getBoundingClientRect：强制横屏舞台旋转 90° 后 AABB 宽高互换，clientWidth/Height 始终是舞台内真实尺寸 */
+    let w = container.clientWidth, h = container.clientHeight;
+    if (!(w > 0 && h > 0)) { const rect = container.getBoundingClientRect(); w = rect.width; h = rect.height; }
+    if (w < 10 || h < 10) return;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
     camera.updateProjectionMatrix();
     refreshHomeCam();   /* 宽高比变化 → 重算 fit 机位（global 归位目标随之更新） */
     /* global 静止机位随宽高比直接吸附新 fit 位（瞬移、无运镜）；
