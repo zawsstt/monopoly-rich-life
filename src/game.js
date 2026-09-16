@@ -121,7 +121,7 @@ function newGame(charIds, humanCharId, opts) {
   G.cur = -1;
   G.round = 1;
   G.maxRounds = opts.maxRounds;
-  G.pot = 0;
+  G.pot = 0; G._stopCause = null;
   G.blocks = {};
   G.luckyTile = -1;
   G.lastRoll = 1;
@@ -357,6 +357,7 @@ async function moveSteps(gid, player, steps, { silentStart = false } = {}) {
     if (G.blocks[player.pos] != null && player.pos !== 0) {
       const by = G.blocks[player.pos];
       delete G.blocks[player.pos];
+      G._stopCause = by;   /* 路障逼停归因：若此格是拘留所，入狱记在放置者头上（净化心灵触发计数） */
       if (G.stats) G.stats[player.idx].blocksHit++;
       ui.updateTile(player.pos);
       ui.renderBlocks();   // 路障即时消除
@@ -785,7 +786,8 @@ async function resolveTile(gid, player, depth) {
     case 'gotojail':
       ui.log(`${pname(player)} 踩中拘留所，被警察带走`, 'bad');
       await sleep(300);
-      await sendToJail(gid, player);
+      await sendToJail(gid, player, { causer: (G._stopCause != null && G._stopCause !== player.idx) ? G._stopCause : null });
+      G._stopCause = null;
       await sleep(500);
       break;
 
