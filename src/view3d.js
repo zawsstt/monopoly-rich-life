@@ -1354,7 +1354,7 @@ const V3D = (() => {
         if (g) g.userData.fromModern = true;   /* 主题接管标记（QA/预览用） */
         if (g && !g.name) g.name = 'prop_' + i + '_modern_lv' + wantLevel;
       }
-      if (window.Props3D && typeof window.Props3D[i] === 'function') {
+      if (!g && window.Props3D && typeof window.Props3D[i] === 'function') {
         try { g = window.Props3D[i](wantLevel); } catch (e) { g = null; }
       }
       if (!g && B && typeof B.property === 'function') g = B.property(i, wantLevel);
