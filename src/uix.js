@@ -2003,6 +2003,62 @@ const ui = (() => {
     try { const v = parseFloat(localStorage.getItem('df_speed')); return SPEED_STEPS.indexOf(v) >= 0 ? v : 1; } catch (e) { return 1; }
   }
 
+  /* ================= 移动端 HUD（纯表现层：玩家面板抽屉开关 / 触控按压态；不触碰对局逻辑） =================
+   * ≤1099px 时 #side 由 CSS 变为右侧抽屉（style.css 移动端段），这里只负责：
+   *   - 往顶栏注入 👥 开关（#side-toggle，≥1100px 由 CSS 隐藏）
+   *   - body.side-open 类切换：点开关 / 点抽屉外部 / Esc
+   *   - .t-press 按压态（委托 pointerdown），与 :active 等价，兜底 iOS 上 :active 偶发不触发 */
+  let _mobileHudDone = false;
+  function isSideOpen() {
+    return !!(document.body && document.body.classList && document.body.classList.contains('side-open'));
+  }
+  function setSideOpen(v) {
+    if (!document.body || !document.body.classList) return;
+    document.body.classList.toggle('side-open', !!v);
+    const t = document.getElementById('side-toggle');
+    if (t && t.setAttribute) t.setAttribute('aria-expanded', v ? 'true' : 'false');
+  }
+  function mountMobileHud() {
+    if (_mobileHudDone) return;
+    _mobileHudDone = true;
+    try {
+      const bar = document.querySelector('#topbar .tb-actions');
+      if (bar && !document.getElementById('side-toggle')) {
+        const b = document.createElement('button');
+        b.id = 'side-toggle'; b.className = 'tb-btn side-toggle'; b.type = 'button';
+        b.title = '玩家面板 / 战报'; b.setAttribute('aria-label', '玩家面板'); b.setAttribute('aria-expanded', 'false');
+        b.textContent = '👥';
+        b.addEventListener('click', (e) => {
+          e.stopPropagation();
+          setSideOpen(!isSideOpen());
+          try { SFX.click(); } catch (err) { /* 无声环境 */ }
+        });
+        bar.appendChild(b);
+      }
+      /* 点抽屉外部 / Esc 关闭（≥1100px 抽屉不存在，body.side-open 无副作用） */
+      document.addEventListener('click', (e) => {
+        if (!isSideOpen()) return;
+        const t = e.target;
+        if (t && t.closest && (t.closest('#side') || t.closest('#side-toggle'))) return;
+        setSideOpen(false);
+      });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && isSideOpen()) setSideOpen(false); });
+      /* 触控按压态 */
+      const PRESS = '.btn, .tb-btn, .pchip, .seg button, .dp-btn, .lb-tab, .v3d-cam-btn';
+      document.addEventListener('pointerdown', (e) => {
+        const t = e.target && e.target.closest ? e.target.closest(PRESS) : null;
+        if (t && !t.disabled && t.classList) t.classList.add('t-press');
+      }, { passive: true });
+      const clearPress = () => {
+        const list = document.querySelectorAll ? document.querySelectorAll('.t-press') : [];
+        for (let i = 0; i < list.length; i++) list[i].classList.remove('t-press');
+      };
+      document.addEventListener('pointerup', clearPress, { passive: true });
+      document.addEventListener('pointercancel', clearPress, { passive: true });
+      if (window.addEventListener) window.addEventListener('blur', clearPress);
+    } catch (e) { /* 桩环境 / 无 DOM 忽略 */ }
+  }
+
   /* ================= 对局场景初始化 ================= */
   function initGameScene() {
     uixStyle();
@@ -2011,6 +2067,8 @@ const ui = (() => {
     buildDice();
     buildTokens();
     buildPlayersPanel();
+    mountMobileHud();
+    setSideOpen(false);   /* 新一局默认收起抽屉（上局可能开着回了主菜单） */
     renderBlocks();
     updateTileAll();
     updateHUD();
