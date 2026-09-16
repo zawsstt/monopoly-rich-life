@@ -33,6 +33,7 @@ const PSA = (() => {
   const WATCHDOG_SLACK_SEC = 45;              // 看门狗：时长 + 45s 无条件解锁
   const UNKNOWN_VIDEO_SEC = 120;              // 元数据未知时的保守时长假设（硬上限）
   const READY_TIMEOUT_MS = 15000;             // readyState 15s 仍 <3 → 视为加载失败
+  const PENDING_FALLBACK_MS = 18000;          // 待接入态超时：18s 内片源没接上 → 文字净化兜底
   const TEXT_ROTATE_MS = 10000;               // 文字净化文案轮播间隔
   const TEXT_PSAS = [
     { icon: '🕊️', t: '善意是最好的护身符', d: '你已让三位对手先后身陷囹圄。停止伤害，财富才有意义。' },
@@ -44,7 +45,8 @@ const PSA = (() => {
   let lock = null;                 // 当前影院锁 { el, kind, mode, released, release(), ... }
   const custody = new Set();       // 管控中的座位（shouldSkip 依据）
   const matches = new Map();       // seat -> { gid, baseline, reformed }（改过自新基线）
-  const trace = { triggered: 0, released: 0, releasedBy: null, violations: 0, mode: null };   // 诊断/冒烟观测
+  let prewarmed = null;            // { gid, pick, video }（距阈值一步时预热的片源，触发后直接复用）
+  const trace = { triggered: 0, released: 0, releasedBy: null, violations: 0, mode: null, prewarmed: null };   // 诊断/冒烟观测
 
   /* ---------- 小工具 ---------- */
   const sleepMs = ms => new Promise(r => setTimeout(r, ms));
@@ -160,7 +162,7 @@ const PSA = (() => {
   function _lock(opts) {
     if (lock && !lock.released) return lock;
     opts = opts || {};
-    const kind = opts.kind === 'video' ? 'video' : 'text';
+    const kind = opts.kind === 'video' ? 'video' : (opts.kind === 'pending' ? 'pending' : 'text');
     const slack = (opts.slackSec != null) ? Math.max(0, +opts.slackSec) : WATCHDOG_SLACK_SEC;
     const onRelease = typeof opts.onRelease === 'function' ? opts.onRelease : null;
 
@@ -266,80 +268,105 @@ const PSA = (() => {
       armWatchdog(total);
     };
 
-    if (kind === 'text') { startText(opts.durSec > 0 ? opts.durSec : TEXT_SEC); return L; }
-
-    /* —— 视频模式 —— */
-    let v = null;
-    try { v = document.createElement('video'); } catch (e) { v = null; }
-    if (!v) { startText(TEXT_ON_VIDEO_FAIL_SEC); return L; }
-    L.video = v;
-    try {
-      v.setAttribute('playsinline', ''); v.setAttribute('webkit-playsinline', '');
-      v.setAttribute('controlslist', 'nodownload noplaybackrate noremoteplayback');
-      v.controls = false; v.preload = 'auto'; v.disablePictureInPicture = true;
-      v.src = opts.src;
-      if (media) media.appendChild(v);
-    } catch (e) { /* */ }
-    const knownDur = opts.durSec > 0 ? +opts.durSec : 0;
-    let dur = knownDur || UNKNOWN_VIDEO_SEC;
-    let lastTick = 0, retried = false, failed = false;
-    L.totalSec = knownDur;
-    setProgress(0, knownDur);
-    armWatchdog(dur);
-    const on = (type, fn) => { try { v.addEventListener(type, fn); } catch (e) { /* */ } };
-    const play = () => { let p = null; try { p = v.play(); } catch (e) { p = null; } return (p && typeof p.then === 'function') ? p : Promise.resolve(); };
-    const videoFailed = () => {
-      if (failed || L.released) return;
-      failed = true;
-      try { v.pause(); } catch (e) { /* */ }
-      try { v.remove(); } catch (e) { /* */ }
-      L.video = null;
-      startText(Math.min(knownDur > 0 ? knownDur : TEXT_ON_VIDEO_FAIL_SEC, TEXT_ON_VIDEO_FAIL_SEC));   // 内部重新武装看门狗
-    };
-    L.videoFailed = videoFailed;
-    on('loadedmetadata', () => {
-      const d = (isFinite(v.duration) && v.duration > 1) ? Math.min(v.duration, 600) : 0;
-      if (d) { dur = d; L.totalSec = d; setProgress(v.currentTime || 0, d); armWatchdog(d); }
-    });
-    on('timeupdate', () => {
-      const t = v.currentTime || 0;
-      if (t > lastTick + 0.75 && !v.seeking) { try { v.currentTime = lastTick; } catch (e) { /* */ } return; }   // 快进回拨
-      if (t > lastTick) lastTick = t;
-      setProgress(t, L.totalSec || dur);
-    });
-    on('seeking', () => { if ((v.currentTime || 0) > lastTick + 0.75) { try { v.currentTime = lastTick; } catch (e) { /* */ } } });
-    on('ratechange', () => { if (v.playbackRate !== 1) { try { v.playbackRate = 1; } catch (e) { /* */ } } });
-    on('pause', () => { if (!L.released && !failed && !v.ended) play().catch(() => { /* */ }); });   // 暂停无效
-    on('ended', () => release('ended'));
-    on('error', () => {
-      if (!retried) { retried = true; lastTick = 0; try { v.load(); play().catch(() => { /* */ }); } catch (e) { videoFailed(); } }   // 重载源一次
-      else videoFailed();
-    });
-    later(() => { if (!L.released && !failed && !(v.readyState >= 3)) videoFailed(); }, READY_TIMEOUT_MS);
-    /* 起播链：有声 → 静音兜底（autoplay 策略）→ 手势按钮；三者都不改变「不可跳过」 */
-    const showStartButton = () => {
+    /* —— 视频模式（kind==='video' 直接启动，或待接入态由 attach 启动）—— */
+    let started = false;
+    const startVideo = (src, knownDurIn, reuseEl) => {
+      if (L.released || started) return;
+      started = true;
+      L.mode = 'video';
+      let v = reuseEl || null;
+      if (!v) { try { v = document.createElement('video'); } catch (e) { v = null; } }
+      if (!v) { startText(TEXT_ON_VIDEO_FAIL_SEC); return; }
+      L.video = v;
       try {
-        setHint('▶ 浏览器要求手动开始播放（开始后同样不可跳过）');
-        const b = document.createElement('button');
-        b.className = 'psa-start';
-        b.textContent = '▶ 开始净化';
-        b.addEventListener('click', () => { play().then(() => { setHint(v.muted ? '🔇 静音中 · 点击画面可开启声音' : ''); try { b.remove(); } catch (e) { /* */ } }).catch(() => { /* */ }); });
-        if (media) media.appendChild(b);
+        v.setAttribute('playsinline', ''); v.setAttribute('webkit-playsinline', '');
+        v.setAttribute('controlslist', 'nodownload noplaybackrate noremoteplayback');
+        v.controls = false; v.preload = 'auto'; v.disablePictureInPicture = true;
+        v.style.display = '';
+        if (!reuseEl) v.src = src;
+        if (media) media.appendChild(v);
+      } catch (e) { /* */ }
+      const knownDur = knownDurIn > 0 ? +knownDurIn : 0;
+      let dur = knownDur || UNKNOWN_VIDEO_SEC;
+      let lastTick = 0, retried = false, failed = false, playing = false;
+      L.totalSec = knownDur;
+      setProgress(0, knownDur);
+      armWatchdog(dur);
+      setHint('⏳ 片源加载中，请稍候…');   // 网页端首帧到达前有可见的加载态，不再是一片黑屏 + 00:00 / --:--
+      const on = (type, fn) => { try { v.addEventListener(type, fn); } catch (e) { /* */ } };
+      const play = () => { let p = null; try { p = v.play(); } catch (e) { p = null; } return (p && typeof p.then === 'function') ? p : Promise.resolve(); };
+      const videoFailed = () => {
+        if (failed || L.released) return;
+        failed = true;
+        try { v.pause(); } catch (e) { /* */ }
+        try { v.remove(); } catch (e) { /* */ }
+        L.video = null;
+        startText(Math.min(knownDur > 0 ? knownDur : TEXT_ON_VIDEO_FAIL_SEC, TEXT_ON_VIDEO_FAIL_SEC));   // 内部重新武装看门狗
+      };
+      L.videoFailed = videoFailed;
+      on('loadedmetadata', () => {
+        const d = (isFinite(v.duration) && v.duration > 1) ? Math.min(v.duration, 600) : 0;
+        if (d) { dur = d; L.totalSec = d; setProgress(v.currentTime || 0, d); armWatchdog(d); }
+      });
+      on('playing', () => { if (!playing) { playing = true; setHint(v.muted ? '🔇 静音中 · 点击画面可开启声音' : ''); } });
+      on('waiting', () => { if (playing) setHint('⏳ 缓冲中…'); });
+      on('timeupdate', () => {
+        const t = v.currentTime || 0;
+        if (t > lastTick + 0.75 && !v.seeking) { try { v.currentTime = lastTick; } catch (e) { /* */ } return; }   // 快进回拨
+        if (t > lastTick) lastTick = t;
+        setProgress(t, L.totalSec || dur);
+        if (playing && hint && hint.textContent === '⏳ 缓冲中…') setHint(v.muted ? '🔇 静音中 · 点击画面可开启声音' : '');
+      });
+      on('seeking', () => { if ((v.currentTime || 0) > lastTick + 0.75) { try { v.currentTime = lastTick; } catch (e) { /* */ } } });
+      on('ratechange', () => { if (v.playbackRate !== 1) { try { v.playbackRate = 1; } catch (e) { /* */ } } });
+      on('pause', () => { if (!L.released && !failed && !v.ended) play().catch(() => { /* */ }); });   // 暂停无效
+      on('ended', () => release('ended'));
+      on('error', () => {
+        if (!retried) { retried = true; lastTick = 0; try { v.load(); play().catch(() => { /* */ }); } catch (e) { videoFailed(); } }   // 重载源一次
+        else videoFailed();
+      });
+      later(() => { if (!L.released && !failed && !(v.readyState >= 3)) videoFailed(); }, READY_TIMEOUT_MS);
+      /* 起播链：有声 → 静音兜底（autoplay 策略）→ 手势按钮；三者都不改变「不可跳过」 */
+      const showStartButton = () => {
+        try {
+          setHint('▶ 浏览器要求手动开始播放（开始后同样不可跳过）');
+          const b = document.createElement('button');
+          b.className = 'psa-start';
+          b.textContent = '▶ 开始净化';
+          b.addEventListener('click', () => { play().then(() => { setHint(v.muted ? '🔇 静音中 · 点击画面可开启声音' : ''); try { b.remove(); } catch (e) { /* */ } }).catch(() => { /* */ }); });
+          if (media) media.appendChild(b);
+        } catch (e) { /* */ }
+      };
+      try { v.muted = false; } catch (e) { /* */ }
+      play().catch(() => {
+        try { v.muted = true; } catch (e) { /* */ }
+        setHint('🔇 浏览器限制了自动播放声音，已静音起播 · 点击画面可开启声音');
+        play().catch(showStartButton);
+      });
+      /* 音量/静音不构成逃避：点击画面取消静音 */
+      try {
+        const stage = $q('.psa-stage', el);
+        if (stage) stage.addEventListener('click', e => {
+          if (e && e.target && e.target.classList && e.target.classList.contains('psa-start')) return;
+          if (v.muted) { try { v.muted = false; setHint(''); } catch (e2) { /* */ } }
+        });
       } catch (e) { /* */ }
     };
-    play().catch(() => {
-      try { v.muted = true; } catch (e) { /* */ }
-      setHint('🔇 浏览器限制了自动播放声音，已静音起播 · 点击画面可开启声音');
-      play().catch(showStartButton);
-    });
-    /* 音量/静音不构成逃避：点击画面取消静音 */
-    try {
-      const stage = $q('.psa-stage', el);
-      if (stage) stage.addEventListener('click', e => {
-        if (e && e.target && e.target.classList && e.target.classList.contains('psa-start')) return;
-        if (v.muted) { try { v.muted = false; setHint(''); } catch (e2) { /* */ } }
-      });
-    } catch (e) { /* */ }
+
+    /* —— 待接入态：遮罩先落（杜绝探测/排队期间的交互缝隙），片源就位后 attach；超时兜底文字净化 —— */
+    let pendingTimer = 0;
+    L.attach = o => {
+      if (L.released || started) return;
+      if (pendingTimer) { clearTimeout(pendingTimer); pendingTimer = 0; }
+      if (o && o.kind === 'video' && o.src) startVideo(o.src, o.durSec > 0 ? o.durSec : 0, o.reuseEl || null);
+      else { started = true; startText((o && o.durSec > 0) ? o.durSec : TEXT_SEC); }
+    };
+    if (kind === 'text') { started = true; startText(opts.durSec > 0 ? opts.durSec : TEXT_SEC); return L; }
+    if (kind === 'video') { startVideo(opts.src, opts.durSec > 0 ? opts.durSec : 0, opts.reuseEl || null); return L; }
+    L.mode = 'pending';
+    setHint('📡 正在接入公益频道…');
+    setProgress(0, 0);
+    pendingTimer = later(() => { pendingTimer = 0; if (!L.released && !started) L.attach({ kind: 'text', durSec: TEXT_ON_VIDEO_FAIL_SEC }); }, PENDING_FALLBACK_MS);
     return L;
   }
   function isLocked() { return !!lock && !lock.released; }
@@ -352,6 +379,8 @@ const PSA = (() => {
       if (gid !== G.gameId || G.over) return Promise.resolve(false);
       const st = G.stats[seat];
       if (st.psa) return Promise.resolve(false);                       // 同局一次
+      /* 距阈值一步：后台预热片源（网页端 30MB 片源冷启动要等首帧，预取后触发即播） */
+      if ((st.jailCaused | 0) === THRESHOLD - 1 && !exempt()) { try { if (localHuman(G.players[seat])) prewarmMovie(gid); } catch (e) { /* */ } }
       if ((st.jailCaused | 0) < THRESHOLD) return Promise.resolve(false);
       st.psa = 1;                                                       // 落锁：本局不再触发
       trace.triggered++;
@@ -408,10 +437,13 @@ const PSA = (() => {
     custody.add(seat);
     matches.set(seat, { gid, baseline: G.stats[seat].jailCaused | 0, reformed: null });
     if (u) {
+      /* 若触发发生在本人回合的掷骰前（用诬陷卡/路障坑人后仍轮到自己掷），立即释放挂起的掷骰等待：
+       * playTurn 收到 -1 直接返回、轮到下家；否则人已进拘留所还能掷骰走棋 */
+      try { if (typeof u.cancelRollFor === 'function') u.cancelRollFor(p); } catch (e) { /* */ }
       try { u.updatePlayers(); } catch (e) { /* */ }
       try { u.toast(`🕊️ ${nameOf(p)} 被押往拘留所，接受心灵净化…`, '🕊️'); } catch (e) { /* */ }
     }
-    runCustodyMedia(gid, seat);   // 异步：引擎照常推进，其他玩家不受影响；管控期该座位回合由 shouldSkip 跳过
+    runCustodyMedia(gid, seat);   // 异步：遮罩立即落下；引擎照常推进，其他玩家不受影响；管控期该座位回合由 shouldSkip 跳过
     return true;
   }
 
@@ -433,16 +465,46 @@ const PSA = (() => {
     return true;
   }
 
-  /* 管控媒体：探测片源 → 影院锁（视频 / 文字降级）→ 结束后解除管控 */
+  /* 距阈值一步（jailCaused === THRESHOLD-1）：后台预热片源（隐藏 video 预取首段），触发时免探测免等首帧 */
+  async function prewarmMovie(gid) {
+    try {
+      if (exempt() || typeof G === 'undefined' || gid !== G.gameId || prewarmed) return;
+      const found = await probeVideos();
+      const pick = pickMovie(found);
+      if (!pick || typeof G === 'undefined' || gid !== G.gameId) return;
+      let v = null;
+      try {
+        v = document.createElement('video');
+        v.setAttribute('playsinline', '');
+        v.muted = true; v.preload = 'auto';
+        v.style.display = 'none';
+        v.src = pick.url;
+        (document.body || document.documentElement).appendChild(v);
+        v.load();
+      } catch (e) { v = null; }
+      prewarmed = { gid, pick, video: v };
+      trace.prewarmed = pick.n;
+    } catch (e) { /* 预热失败不影响主链路 */ }
+  }
+  function dropPrewarm() {
+    if (prewarmed && prewarmed.video) { try { prewarmed.video.pause(); prewarmed.video.removeAttribute('src'); prewarmed.video.remove(); } catch (e) { /* */ } }
+    prewarmed = null;
+  }
+
+  /* 管控媒体：立即落锁（待接入态，杜绝探测/排队间隙还能操作游戏）→ 探测/复用预热片源 → attach 视频/文字 */
   async function runCustodyMedia(gid, seat) {
-    let pick = null;
-    try { const found = await probeVideos(); if (found.length) pick = pickMovie(found); } catch (e) { pick = null; }
-    while (isLocked()) { await sleepMs(250); if (gid !== G.gameId) return; }   // 同屏两人先后触发：串行
+    while (isLocked()) { await sleepMs(250); if (gid !== G.gameId || !custody.has(seat)) return; }   // 同屏两人先后触发：串行
     if (typeof G === 'undefined' || gid !== G.gameId || !custody.has(seat)) return;
-    trace.mode = pick ? 'video' : 'text';
     const done = () => purifyFinish(gid, seat);
-    if (pick) _lock({ kind: 'video', src: pick.url, durSec: 0, onRelease: done });
-    else _lock({ kind: 'text', durSec: TEXT_SEC, onRelease: done });
+    const L = _lock({ kind: 'pending', onRelease: done });
+    const pw = (prewarmed && prewarmed.gid === gid) ? prewarmed : null;
+    prewarmed = null;
+    let pick = pw ? pw.pick : null;
+    if (!pick) { try { const found = await probeVideos(); if (found.length) pick = pickMovie(found); } catch (e) { pick = null; } }
+    if (typeof G === 'undefined' || gid !== G.gameId || !custody.has(seat)) { try { L.release('abort'); } catch (e) { /* */ } return; }
+    trace.mode = pick ? 'video' : 'text';
+    if (pick) L.attach({ kind: 'video', src: pick.url, durSec: 0, reuseEl: pw ? pw.video : null });
+    else { dropPrewarm(); L.attach({ kind: 'text', durSec: TEXT_SEC }); }
   }
 
   /* 管控结束：custody 解除、人物重现、公告（回合衔接由 playTurn 自然完成） */
@@ -467,6 +529,7 @@ const PSA = (() => {
   function abort() {
     custody.clear();
     matches.clear();
+    dropPrewarm();
     try {
       if (typeof G !== 'undefined' && G.players) {
         G.players.forEach(p => { if (p && p.custody) { p.custody = false; const u = U(); if (u) { try { u.setTokenHidden(p.idx, false); } catch (e) { /* */ } } } });
@@ -518,9 +581,10 @@ const PSA = (() => {
     /* 冒烟 / 诊断钩子（smoke_psa.js） */
     __test: {
       lock: _lock, current: () => lock, probeVideos, headOk, pickMovie, honorRead, honorWrite, recordViolation, onPageGone, purifyFinish,
+      prewarmMovie, dropPrewarm, prewarmState: () => prewarmed,
       honorReset: () => { try { localStorage.removeItem(HONOR_KEY); } catch (e) { /* */ } },
       custody, matches, trace,
-      C: { HONOR_KEY, MOVIE_BASES, MOVIE_COUNT, HEAD_TIMEOUT_MS, CUSTODY_POS, THRESHOLD, TEXT_SEC, TEXT_ON_VIDEO_FAIL_SEC, WATCHDOG_SLACK_SEC, UNKNOWN_VIDEO_SEC, READY_TIMEOUT_MS },
+      C: { HONOR_KEY, MOVIE_BASES, MOVIE_COUNT, HEAD_TIMEOUT_MS, CUSTODY_POS, THRESHOLD, TEXT_SEC, TEXT_ON_VIDEO_FAIL_SEC, WATCHDOG_SLACK_SEC, UNKNOWN_VIDEO_SEC, READY_TIMEOUT_MS, PENDING_FALLBACK_MS },
     },
   };
 })();
