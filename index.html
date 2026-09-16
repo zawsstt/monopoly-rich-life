@@ -2,10 +2,10 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <title>大富翁 · 富贵人生</title>
 <link rel="icon" href="assets/img/ico_coin.png?v=46">
-<link rel="stylesheet" href="css/style.css?v=51">
+<link rel="stylesheet" href="css/style.css?v=52">
 <script>
 /* 最早的错误收集器：在任何游戏脚本之前挂载 */
 window.__errs = [];
@@ -19,6 +19,17 @@ window.addEventListener('unhandledrejection', function (e) {
 </script>
 </head>
 <body>
+<div id="rotate-hint" aria-hidden="true">
+  <div class="rh-icon">
+    <svg viewBox="0 0 64 64" width="72" height="72" fill="none">
+      <rect x="20" y="8" width="24" height="48" rx="4" stroke="#ffd76a" stroke-width="3"/>
+      <path d="M8 32 A 40 40 0 0 1 14 18" stroke="#ffd76a" stroke-width="3" stroke-linecap="round"/>
+      <path d="M50 6 L58 14 L46 16 Z" fill="#ffd76a"/>
+    </svg>
+  </div>
+  <div class="rh-t">请横屏游玩</div>
+  <div class="rh-s">转动设备，体验完整棋盘视野</div>
+</div>
 <div id="boot">
   <div class="boot-frame" aria-hidden="true"></div>
   <img class="boot-logo" src="assets/img/logo_title.svg" alt="大富翁 · 富贵人生 WEB 版" draggable="false">
@@ -26,6 +37,11 @@ window.addEventListener('unhandledrejection', function (e) {
   <div class="boot-tip" id="boot-tip">正在加载资源…</div>
 </div>
 <div id="board-boot"><div class="bb-spin"></div><div class="bb-txt">正在搭建书房沙盘…</div></div>
+<!-- 移动端竖屏提示条（仅 竖屏 且 宽 <760 时由 main.js 显示；可关闭、不遮挡操作；样式见 css/style.css 移动端段） -->
+  <span class="mh-ico" aria-hidden="true">📱</span>
+  <span class="mh-txt">横屏体验更佳 · 转动设备可看到完整桌面</span>
+  <button id="mobile-hint-close" type="button" aria-label="关闭提示">✕</button>
+</div>
 <style>
 #boot{position:fixed;inset:0;z-index:2000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;
   background:
@@ -252,14 +268,14 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
 <script type="text/plain" data-src="js/lib/three.min.js?v=46" data-size="607784"></script>
 <script type="text/plain" data-src="js/lib/peerjs.min.js?v=46" data-size="92865"></script>
 <script type="text/plain" data-src="src/data.js?v=50" data-size="22688"></script>
-<script type="text/plain" data-src="src/sfx.js?v=46" data-size="7494"></script>
-<script type="text/plain" data-src="src/bgm.js?v=48" data-size="3417"></script>
+<script type="text/plain" data-src="src/sfx.js?v=52" data-size="9203"></script>
+<script type="text/plain" data-src="src/bgm.js?v=52" data-size="6046"></script>
 <script type="text/plain" data-src="src/ai.js?v=50" data-size="12389"></script>
 <script type="text/plain" data-src="src/game.js?v=51" data-size="61366"></script>
 <script type="text/plain" data-src="src/career.js?v=51" data-size="43455"></script>
-<script type="text/plain" data-src="src/uix.js?v=51" data-size="123281"></script>
+<script type="text/plain" data-src="src/uix.js?v=52" data-size="126503"></script>
 <script type="text/plain" data-src="src/net.js?v=50" data-size="20034"></script>
-<script type="text/plain" data-src="src/view3d.js?v=48" data-size="125415"></script>
+<script type="text/plain" data-src="src/view3d.js?v=52" data-size="142740"></script>
 <script type="text/plain" data-src="src/buildings3d.js?v=46" data-size="93387"></script>
 <script type="text/plain" data-src="assets/models/props3d/prop_6.js?v=46" data-size="61031"></script>
 <script type="text/plain" data-src="assets/models/props3d/prop_3.js?v=46" data-size="51095"></script>
@@ -324,8 +340,8 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
 <script type="text/plain" data-src="assets/models/chars3d/ren.js?v=48" data-size="34552"></script>
 <script type="text/plain" data-src="assets/models/chars3d/doudou.js?v=48" data-size="42064"></script>
 <script type="text/plain" data-src="assets/models/propFactories.js?v=46" data-size="12077"></script>
-<script type="text/plain" data-src="src/main.js?v=50" data-size="34167"></script>
-<script type="text/plain" data-src="src/psa.js?v=50" data-size="28998"></script>
+<script type="text/plain" data-src="src/main.js?v=51" data-size="36791"></script>
+<script type="text/plain" data-src="src/psa.js?v=50" data-size="29220"></script>
 <script type="text/plain" data-kind="img" data-src="assets/img/scene_poster.jpg" data-size="472131"></script>
 <script type="text/plain" data-kind="img" data-src="assets/img/face3_boss.png?v=40" data-size="-1"></script>
 <script type="text/plain" data-kind="img" data-src="assets/img/face3_doudou.png?v=40" data-size="-1"></script>
