@@ -659,6 +659,37 @@ const main = (() => {
     });
   }
 
+  /* ================= 移动端（纯表现层：不触碰对局逻辑） ================= */
+  /* 1) 棋盘风格选中态回显：boardTheme 已从 df_theme 恢复，但 #opt-board 的 .on 仍停在页面默认（经典古风）。
+   *    手机上无 hover 提示，选中态是玩家唯一能看到的持久化反馈，必须与实际生效值一致。 */
+  function syncBoardThemeUI() {
+    $$('#opt-board button').forEach(x => x.classList.toggle('on', x.dataset.bt === boardTheme));
+  }
+  /* 2) 竖屏提示条：竖屏（高 > 宽）且宽 < 760 时显示「横屏体验更佳」，可关闭（本会话内不再弹）；
+   *    不强制、不遮挡操作，横屏 / 桌面下 CSS 一律隐藏（@media 兜底，与 JS 状态无关）。 */
+  const MOB_HINT_KEY = 'df_hint_rotate_dismissed';
+  function setupMobileHint() {
+    const hint = document.getElementById('mobile-hint');
+    if (!hint) return;
+    const dismissed = () => { try { return sessionStorage.getItem(MOB_HINT_KEY) === '1'; } catch (e) { return false; } };
+    const evaluate = () => {
+      const w = window.innerWidth || 0, h = window.innerHeight || 0;
+      const portraitPhone = w > 0 && h > w && w < 760;
+      hint.classList.toggle('show', portraitPhone && !dismissed());
+    };
+    const close = document.getElementById('mobile-hint-close');
+    if (close) close.addEventListener('click', () => {
+      try { sessionStorage.setItem(MOB_HINT_KEY, '1'); } catch (e) { /* 隐私模式等 */ }
+      hint.classList.remove('show');
+      try { SFX.click(); } catch (e) { /* */ }
+    });
+    let timer = 0;
+    const schedule = () => { clearTimeout(timer); timer = setTimeout(evaluate, 120); };   /* 旋转后 innerWidth/Height 需要一帧稳定 */
+    window.addEventListener('resize', schedule);
+    window.addEventListener('orientationchange', schedule);
+    evaluate();
+  }
+
   /* 每一步独立 try：任何一步抛错只记录、不连带跳过后续
    * （曾因 bgm.js 一个 ReferenceError 让 debugAutostart / 排行榜按钮 / 联机大厅全部被跳过） */
   function init() {
@@ -670,6 +701,8 @@ const main = (() => {
     };
     step('charCards', buildCharCards);
     step('bindStart', bindStart);
+    step('boardThemeUI', syncBoardThemeUI);
+    step('mobileHint', setupMobileHint);
     step('chrome', () => ui.bindChrome());
     step('gameOver', hookGameOver);
     step('sfx', () => SFX.loadSamples());
