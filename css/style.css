@@ -460,12 +460,12 @@ select option { background: #0d241b; color: #eee; }
 .tb-speed { min-width: 46px; text-align: center; color: var(--gold); font-weight: 900; font-size: 13.5px; letter-spacing: 0; }
 .tb-sep { width: 1px; height: 22px; background: rgba(255, 215, 106, .28); margin: 0 3px; }
 
-/* ---- 全局播报条（HUD 下方，队列轮播） ---- */
-#news-bar { flex: 0 0 36px; display: flex; justify-content: center; align-items: center; padding: 5px 16px 0; position: relative; z-index: 24; }
+/* ---- 全局播报条（并入顶栏中段，弹幕式右→左滚动；原独立快报行已取消，高度还给 3D 画布） ---- */
 #news-ticker {
+  flex: 1 1 auto; min-width: 140px; max-width: 980px; margin: 0 6px; align-self: center;
   display: flex; align-items: center; gap: 10px;
-  height: 30px; min-width: 460px; max-width: min(980px, 78vw);
-  padding: 0 14px 0 0; border-radius: 999px;
+  height: 30px;
+  padding: 0 12px 0 0; border-radius: 999px;
   background: linear-gradient(180deg, rgba(8, 26, 18, .9), rgba(5, 18, 12, .94));
   box-shadow: inset 0 0 0 1px rgba(255, 215, 106, .32), inset 0 1px 0 rgba(255, 255, 255, .04), 0 6px 16px rgba(0, 0, 0, .38);
   overflow: hidden; transition: box-shadow .35s;
@@ -481,18 +481,17 @@ select option { background: #0d241b; color: #eee; }
 }
 .nt-tag i { width: 7px; height: 7px; border-radius: 50%; background: #fff; box-shadow: 0 0 7px #fff; animation: ntDot 1.3s ease-in-out infinite; }
 @keyframes ntDot { 50% { opacity: .35; transform: scale(.75); } }
-.nt-view { flex: 1; min-width: 0; height: 30px; display: flex; align-items: center; overflow: hidden; position: relative; }
+.nt-view { flex: 1; min-width: 0; height: 30px; overflow: hidden; position: relative; }
+/* 弹幕：消息绝对定位在视窗内，从右边缘外 (--nt-from = 视窗宽) 匀速滑到左边缘外 (--nt-to = −消息宽)，uix.js 按长度算时长 */
 .nt-msg {
+  position: absolute; left: 0; top: 0; height: 100%; display: flex; align-items: center;
   white-space: nowrap; font-size: 13px; font-weight: 700; color: #f2e8cc; letter-spacing: .4px;
-  animation: ntIn .42s cubic-bezier(.2, .9, .3, 1.2) both;
-  will-change: transform, opacity;
+  transform: translateX(var(--nt-from, 100%));
+  will-change: transform;
 }
-@keyframes ntIn { from { opacity: 0; transform: translateY(12px); } }
-.nt-msg.out { animation: ntOut .26s ease-in both; }
-@keyframes ntOut { to { opacity: 0; transform: translateY(-12px); } }
-.nt-msg.scroll { animation: ntIn .42s cubic-bezier(.2, .9, .3, 1.2) both, ntScroll var(--nt-dur, 6s) linear .9s both; }
-@keyframes ntScroll { to { transform: translateX(var(--nt-dx, 0px)); } }
-#news-ticker.idle .nt-msg { color: #8fa898; font-weight: 600; letter-spacing: 1px; }
+.nt-msg.run { animation: ntMarquee var(--nt-dur, 8s) linear 1 both; }
+@keyframes ntMarquee { from { transform: translateX(var(--nt-from, 100%)); } to { transform: translateX(var(--nt-to, -100%)); } }
+#news-ticker.idle .nt-msg { position: static; transform: none; color: #8fa898; font-weight: 600; letter-spacing: 1px; }
 .nt-q { flex: 0 0 auto; display: flex; gap: 4px; }
 .nt-q i { width: 5px; height: 5px; border-radius: 50%; background: rgba(255, 215, 106, .28); }
 .nt-q i.on { background: var(--gold); box-shadow: 0 0 5px rgba(255, 215, 106, .8); }
@@ -1920,7 +1919,6 @@ input, textarea { user-select: text; -webkit-user-select: text; }
     padding-left: calc(16px + var(--sa-l)); padding-right: calc(16px + var(--sa-r));
     height: calc(50px + var(--sa-t)); flex-basis: calc(50px + var(--sa-t));
   }
-  #news-bar { padding-left: calc(16px + var(--sa-l)); padding-right: calc(16px + var(--sa-r)); }
   #main { padding-left: calc(10px + var(--sa-l)); padding-right: calc(10px + var(--sa-r)); padding-bottom: calc(10px + var(--sa-b)); }
   /* 底部掷骰区：2D / 3D 两种模式共用 .bc-action 子级加内边距，绕开 view3d 注入的 #board-center !important 内边距 */
   #board-center .bc-action { padding-bottom: var(--sa-b); }
@@ -2036,8 +2034,7 @@ input, textarea { user-select: text; -webkit-user-select: text; }
   .tb-ico { width: 36px; }
   .tb-speed { min-width: 40px; }
   .tb-sep { display: none; }
-  #news-bar { padding: 4px 8px 0; padding-left: calc(8px + var(--sa-l)); padding-right: calc(8px + var(--sa-r)); }
-  #news-ticker { min-width: 0; width: 100%; max-width: 100%; }
+  #news-ticker { min-width: 100px; margin: 0 4px; }
   .nt-tag { letter-spacing: 1.5px; padding: 0 10px 0 9px; font-size: 11px; }
   .nt-msg { font-size: 12.5px; }
   /* 中央 HUD：状态匾额单行省略；掷骰按钮略收 */
@@ -2147,8 +2144,8 @@ html.stage-short .tb-btn { padding: 5px 8px; min-height: 32px; font-size: 11.5px
 html.stage-short .tb-ico { width: 32px; font-size: 14px; }
 html.stage-short .tb-speed { min-width: 36px; font-size: 12px; }
 html.stage-short #side-toggle { width: 36px; min-height: 32px; font-size: 15px; }
-html.stage-short #news-bar { flex: 0 0 26px; padding-top: 2px; }
-html.stage-short #news-ticker, html.stage-short .nt-tag, html.stage-short .nt-view { height: 22px; }
+html.stage-short #news-ticker, html.stage-short .nt-tag, html.stage-short .nt-view { height: 24px; }
+html.stage-short #news-ticker { min-width: 90px; margin: 0 4px; }
 html.stage-short .nt-tag { font-size: 10px; letter-spacing: 1.5px; padding: 0 8px; }
 html.stage-short .nt-msg { font-size: 11.5px; }
 html.stage-short #main { padding: 3px 8px calc(4px + var(--sa-b)); }
@@ -2160,6 +2157,31 @@ html.stage-short #dice-wrap { zoom: .8; }
 html.stage-short .toast { font-size: 11.5px; padding: 6px 10px; }
 html.stage-short #pickbar { padding: 8px 12px; font-size: 12px; gap: 8px; }
 html.stage-short #board-center > .prop-fanfare { font-size: 12px; padding: 6px 12px; }
+/* 玩家抽屉：卡片 118→~92px 高（头像 46→36、字号 −2），两张卡 + 战报在 353px 抽屉里一屏可见 */
+html.stage-short #side { width: min(300px, 88vw); padding: 8px; padding-right: calc(8px + var(--sa-r)); }
+html.stage-short #players { gap: 6px; }
+html.stage-short .pcard { padding: 6px 8px 6px 11px; border-radius: 10px; }
+html.stage-short .pc-top { gap: 8px; }
+html.stage-short .pc-avatar { width: 36px; height: 36px; flex-basis: 36px; border-radius: 10px; }
+html.stage-short .pc-avatar img { width: 34px; height: 36px; }
+html.stage-short .pc-name { font-size: 12.5px; letter-spacing: .5px; }
+html.stage-short .pc-cash { font-size: 14px; }
+html.stage-short .bd { font-size: 10px; padding: 3px 5px; }
+html.stage-short .pc-props { margin-top: 4px; min-height: 20px; gap: 4px; }
+html.stage-short .pchip { font-size: 12px; padding: 2px 6px; min-height: 26px; }
+html.stage-short .pc-lands { margin-top: 3px; font-size: 10.5px; }
+html.stage-short .pc-lands-count { font-size: 12px; }
+html.stage-short #log-panel { min-height: 96px; }
+html.stage-short .logline { font-size: 11px; }
+/* 生涯称号面板：页签 / 轨道行 / 徽章卡等比收，三页签在 393px 内不靛着滚 */
+html.stage-short .modal-mask.cr-modal .modal { padding: 10px 12px; }
+html.stage-short .cr-tabs .lb-tab { min-height: 34px; font-size: 12px; padding: 6px 10px; }
+html.stage-short .cr-track { padding: 6px 8px; gap: 8px; }
+html.stage-short .cr-track-ico { width: 52px; height: 52px; }
+html.stage-short .cr-track-ico svg { width: 44px; height: 44px; }
+html.stage-short .cr-grid { grid-template-columns: repeat(5, 1fr); gap: 6px; }
+html.stage-short .cr-card { padding: 6px 4px; }
+html.stage-short .cr-card .ic { width: 36px; height: 36px; }
 
 /* 强制横屏舞台里物理 vh = 舞台宽、vw = 舞台高：原本按「屏高」封顶的规则改用 vw，按「屏宽」取值的改用 vh */
 body.force-land .modal { width: min(94vh, 480px); max-height: 92vw; }
