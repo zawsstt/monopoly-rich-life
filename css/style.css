@@ -1875,3 +1875,285 @@ body.psa-noscroll { overflow: hidden !important; }
 .cr-card.secret .hint { color: #7d8f86; font-style: italic; }
 .cr-card.secret .ic { filter: grayscale(1) brightness(.7); }
 @media (max-width: 720px) { #psa-lock .psa-stage { width: 96vw; padding: 10px; } #psa-lock .psa-media { max-height: 56vh; } }
+
+/* ============================================================
+   移动端适配（M1 · 布局 / 安全区 / 触控 UI）—— 只追加，不改动上方桌面规则
+   断点与生效条件（书写顺序即层叠顺序：先触控目标，后窄屏收紧，窄屏规则可压过触控放大）：
+     全局                       overscroll / tap-highlight / text-size-adjust 治理；@supports env() 安全区内边距
+     ≤1099px                    右侧玩家面板 → 抽屉（顶栏 👥 开关由 uix.js 注入；点外部 / Esc 关闭），棋盘独占宽度；角色卡 3 列
+     (pointer: coarse)          触控目标 ≥40/44px（按钮加高、道具芯片扩大命中区）
+     (hover: none)              :active 反馈替代 hover；关闭触屏上会"粘住"的 hover 态
+     ≤900px                     横屏手机 / 小平板：顶栏藏 logo、收间距
+     ≤760px                     手机档：顶栏紧凑、播报条收窄、弹窗 94vw、开始界面 / 中央 HUD 收紧
+     (max-height: 520px)        手机横屏：生涯面板取消内滚（整窗滚动）、PSA 媒体区按高度封顶
+     ≤560px                     竖屏手机：结算榜单去 min-width、弹窗按钮等分、联机大厅收紧
+     ≤420px                     超窄：顶栏 8 个控件压进 390px（字号 10.5px / 图标 32px）
+     portrait ∧ ≤760px          「横屏体验更佳」提示条（#mobile-hint，main.js 控制 .show；可关闭、不遮挡操作、弹窗/抽屉打开时隐藏）
+     @supports (height: 100dvh) 棋盘公式 / 弹窗高度用 dvh（iOS 动态工具栏），不支持回退 vh
+   ============================================================ */
+
+/* ---- 基础：防橡皮筋 / 防双击缩放 / 防横竖屏切换时 Safari 自动放大字号 ---- */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+html, body { overscroll-behavior: none; }
+body { touch-action: manipulation; -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; }
+input, textarea { user-select: text; -webkit-user-select: text; }
+/* 弹窗 / 列表内滚动区：滚到底不再穿透到页面 */
+.modal, .cr-body, #log-feed, #chat-feed, .lb-body, #start-screen, #side { overscroll-behavior: contain; }
+
+/* ---- 安全区（刘海 / 底部 Home 条）：桌面 env() = 0，规则等价于原值 ---- */
+@supports (padding: env(safe-area-inset-top)) {
+  #topbar {
+    padding-top: env(safe-area-inset-top);
+    padding-left: calc(16px + env(safe-area-inset-left)); padding-right: calc(16px + env(safe-area-inset-right));
+    height: calc(50px + env(safe-area-inset-top)); flex-basis: calc(50px + env(safe-area-inset-top));
+  }
+  #news-bar { padding-left: calc(16px + env(safe-area-inset-left)); padding-right: calc(16px + env(safe-area-inset-right)); }
+  #main { padding-left: calc(10px + env(safe-area-inset-left)); padding-right: calc(10px + env(safe-area-inset-right)); padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
+  /* 底部掷骰区：2D / 3D 两种模式共用 .bc-action 子级加内边距，绕开 view3d 注入的 #board-center !important 内边距 */
+  #board-center .bc-action { padding-bottom: env(safe-area-inset-bottom); }
+  #pickbar { bottom: calc(26px + env(safe-area-inset-bottom)); }
+  #bgm-hint { bottom: calc(26px + env(safe-area-inset-bottom)); }
+  #psa-lock { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  #cutscene { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+}
+
+/* ---- 竖屏提示条（不强制横屏；JS 加 .show，桌面 / 横屏下无论 JS 状态一律隐藏） ---- */
+#mobile-hint {
+  position: fixed; left: 50%; bottom: 14px; bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%); z-index: 150;   /* 低于 #modal-root 200：弹窗打开时被遮罩盖住，不压弹窗底部按钮；高于 start-screen 50 / net-lobby 60 */
+  display: none; align-items: center; gap: 10px;
+  max-width: min(94vw, 460px); padding: 6px 6px 6px 16px; border-radius: 999px;
+  background: linear-gradient(180deg, rgba(12, 36, 25, .96), rgba(6, 20, 14, .97));
+  box-shadow: inset 0 0 0 1px rgba(255, 215, 106, .45), 0 10px 26px rgba(0, 0, 0, .5);
+  color: #ffe1a1; font-size: 13px; font-weight: 700; letter-spacing: .5px;
+}
+#mobile-hint.show { display: flex; animation: mhIn .35s cubic-bezier(.3, 1.3, .5, 1) both; }
+@keyframes mhIn { from { opacity: 0; transform: translate(-50%, 14px); } }
+#mobile-hint .mh-ico { flex: 0 0 auto; font-size: 18px; line-height: 1; animation: mhRotate 2.6s ease-in-out infinite; }
+@keyframes mhRotate { 0%, 60%, 100% { transform: rotate(0); } 30% { transform: rotate(90deg); } }
+#mobile-hint .mh-txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#mobile-hint button {
+  flex: 0 0 auto; width: 40px; height: 40px; border-radius: 50%; border: none; cursor: pointer;
+  background: rgba(255, 255, 255, .08); color: #e6dfc6; font-family: inherit; font-size: 15px; font-weight: 800; line-height: 1;
+  box-shadow: inset 0 0 0 1px rgba(255, 215, 106, .3);
+}
+#mobile-hint button:active { background: rgba(255, 255, 255, .18); color: var(--gold-hi); }
+@media (orientation: landscape), (min-width: 761px) { #mobile-hint.show { display: none; } }
+body.side-open #mobile-hint.show { display: none; }   /* 抽屉打开时不压住战报 / 聊天区 */
+
+/* ---- ≤1099px：玩家面板（含战报 / 聊天）→ 右侧抽屉 ---- */
+#side-toggle { display: none; }
+@media (max-width: 1099px) {
+  body { overflow: hidden; }
+  #start-screen { overflow-x: hidden; }   /* 开始界面只允许纵向滚动：任何漂浮气泡 / 印章都不得引发横向拖动 */
+  :root { --board: min(calc(100vw - 24px), calc((100vh - 128px) * 1.4444), 1680px); }
+  #main { flex-direction: row; align-items: stretch; overflow: visible; padding: 6px 8px 8px; }   /* 必须 stretch：3D 模式 #board 绝对定位，board-wrap 需撑满高度 */
+  #side-toggle {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 40px; min-height: 40px; padding: 0; font-size: 17px; position: relative;
+  }
+  body.side-open #side-toggle { color: var(--gold-hi); box-shadow: inset 0 0 0 1px rgba(255, 215, 106, .85), 0 0 12px rgba(240, 180, 41, .3); }
+  /* 顶栏：按钮 / 回合章不许被 flex 压成两行（844×390 横屏下曾出现「规\n则」） */
+  .tb-btn, #hud-round, #hud-season { white-space: nowrap; flex-shrink: 0; }
+  .hud-chips, .tb-actions { flex-shrink: 0; }
+  #side {
+    position: fixed; top: 50px; top: calc(50px + env(safe-area-inset-top, 0px)); right: 0; bottom: 0;
+    width: min(330px, 88vw); flex: none; z-index: 45;
+    padding: 10px; padding-right: calc(10px + env(safe-area-inset-right, 0px)); padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+    background: linear-gradient(180deg, rgba(9, 28, 19, .97), rgba(5, 18, 12, .985));
+    box-shadow: -10px 0 30px rgba(0, 0, 0, .5), inset 1px 0 0 rgba(255, 215, 106, .32);
+    transform: translateX(104%); visibility: hidden;
+    transition: transform .28s cubic-bezier(.3, 1.1, .4, 1), visibility 0s linear .28s;
+    overflow-y: auto; -webkit-overflow-scrolling: touch;
+    pointer-events: auto;
+  }
+  body.side-open #side { transform: none; visibility: visible; transition: transform .28s cubic-bezier(.3, 1.1, .4, 1); }
+  /* 抽屉内玩家卡恢复纵向堆叠（覆盖 ≤900px 的横排规则） */
+  #players { flex-direction: column; flex-wrap: nowrap; }
+  .pcard { flex: 0 0 auto; }
+  #log-panel { min-height: 140px; }
+  /* 遮罩：位于 #game-screen 的层叠上下文内（低于抽屉 45，高于 3D 中央 HUD 30 / 视角按钮 40）；点它 = 点外部 → uix.js 关闭抽屉 */
+  body.side-open #game-screen::after {
+    content: ''; position: fixed; inset: 0; z-index: 44;
+    background: rgba(2, 10, 6, .42); animation: fadeIn .2s ease both;
+  }
+  /* 开始界面角色卡：3 列（压过 max-height:700px 的 6×142px 横排——844×390 下会溢出 68px） */
+  #char-grid { grid-template-columns: repeat(3, 158px); gap: 15px; }
+}
+
+/* ---- 触控目标（仅粗指针设备生效，桌面视觉不变；下方窄屏块可按需压窄宽度，高度保持 ≥40）---- */
+@media (pointer: coarse) {
+  .tb-btn { min-height: 40px; }
+  .tb-ico { width: 40px; }
+  .btn { min-height: 44px; }
+  .btn-mini { min-height: 40px; padding-top: 7px; padding-bottom: 7px; }
+  .seg button { min-height: 40px; padding-top: 8px; padding-bottom: 8px; }
+  .lb-tabs .lb-tab { min-height: 40px; }
+  #btn-roll { min-height: 56px; }
+  #chat-emoji button { min-width: 40px; min-height: 36px; font-size: 18px; }
+  select, #opt-name, .net-input, #chat-input { min-height: 40px; }
+  .dp-btn { min-width: 60px; min-height: 60px; }
+  .v3d-cam-btn { min-height: 40px; }
+  #btn-cancel-pick { min-height: 40px; }
+  /* 道具芯片：视觉不变，透明伪元素把命中区扩到 ≥44px */
+  .pchip { min-height: 28px; }
+  .pchip::after { content: ''; position: absolute; inset: -8px; border-radius: 12px; }
+  .cr-chip.got { position: relative; min-height: 32px; }
+  .cr-chip.got::before { content: ''; position: absolute; inset: -5px; border-radius: 999px; }   /* 生涯称号芯片：视觉不变，命中区 32→42px（::after 已被「佩戴中」角标占用） */
+  #mobile-hint button { width: 44px; height: 44px; }
+  #side-toggle { width: 44px; min-height: 44px; }
+}
+/* ---- hover 不可用（触屏）：:active 反馈接管；关闭会"粘住"的 hover 效果 ---- */
+@media (hover: none) {
+  .tb-btn:active { color: var(--gold-hi); }
+  .btn-ghost:active { color: var(--gold-hi); }
+  .pchip:not(:disabled):active { transform: translateY(1px) scale(.97); box-shadow: inset 0 0 0 1px rgba(255, 215, 106, .7), 0 1px 0 rgba(0, 0, 0, .35); }
+  .seg button:not(.on):not(:disabled):active { color: var(--gold-hi); background: rgba(255, 255, 255, .09); }
+  .shop-item:active, .sell-item:active { box-shadow: inset 0 0 0 1px rgba(255, 215, 106, .42), inset 0 1px 0 rgba(255, 255, 255, .05); }
+  .lb-tabs .lb-tab:active { color: var(--gold-hi); }
+  .cr-chip.got:active, .cr-card.got:active { filter: brightness(1.2); }
+  .dp-btn:active { border-color: var(--gold); transform: scale(.96); }
+  .char-card:active { transform: translateY(-4px); }
+  .char-card:hover { transform: none; }
+  .char-card:hover .cc-full img { transform: none; }
+  .char-card:hover::after { opacity: 0; }
+  .tile:hover { transform: none; filter: none; }
+  .opt-group[data-hint]:hover::after, .opt-group[data-hint]:hover::before { opacity: 0; }
+  /* 触屏永远悬停不到：气泡伪元素直接不渲染（nowrap 长文案在 844px 宽会撑出 9px 横向滚动区） */
+  .opt-group[data-hint]::after, .opt-group[data-hint]::before, .char-card::after { display: none; }
+  .pchip:not(:disabled):hover { transform: none; }
+}
+/* JS 触控按压态（uix.js 委托 pointerdown 加 .t-press；与 :active 等价，兜底 iOS 上 :active 偶发不触发） */
+.t-press { filter: brightness(1.08); }
+.btn.t-press, .tb-btn.t-press, .seg button.t-press, .lb-tab.t-press { transform: translateY(1px); }
+.pchip.t-press:not(:disabled) { transform: translateY(1px) scale(.97); }
+
+/* ---- ≤900px：横屏手机 / 小平板——顶栏先藏 logo、收间距（760–900 区间避免溢出） ---- */
+@media (max-width: 900px) {
+  #topbar { gap: 10px; }
+  .logo-mini { display: none; }
+  .tb-actions { gap: 5px; }
+  .tb-btn { padding: 7px 10px; }
+  #hud-round { padding: 6px 11px; }
+}
+
+/* ---- ≤760px：手机档 HUD / 弹窗 / 开始界面 ---- */
+@media (max-width: 760px) {
+  #topbar { gap: 8px; padding-left: 8px; padding-right: 8px; padding-left: calc(8px + env(safe-area-inset-left, 0px)); padding-right: calc(8px + env(safe-area-inset-right, 0px)); }
+  #hud-round { font-size: 12px; padding: 5px 10px; letter-spacing: .5px; white-space: nowrap; }
+  .tb-actions { gap: 4px; }
+  .tb-btn { padding: 7px 8px; font-size: 12px; letter-spacing: 0; white-space: nowrap; }
+  .tb-ico { width: 36px; }
+  .tb-speed { min-width: 40px; }
+  .tb-sep { display: none; }
+  #news-bar { padding: 4px 8px 0; padding-left: calc(8px + env(safe-area-inset-left, 0px)); padding-right: calc(8px + env(safe-area-inset-right, 0px)); }
+  #news-ticker { min-width: 0; width: 100%; max-width: 100%; }
+  .nt-tag { letter-spacing: 1.5px; padding: 0 10px 0 9px; font-size: 11px; }
+  .nt-msg { font-size: 12.5px; }
+  /* 中央 HUD：状态匾额单行省略；掷骰按钮略收 */
+  #center-status { max-width: min(92vw, 520px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 7px 22px; font-size: 13px; }
+  #btn-roll { padding: 12px 36px 10px; font-size: 19px; letter-spacing: 4px; }
+  #btn-roll.waiting-remote { font-size: 13.5px; padding: 11px 20px; }
+  #board-center > .prop-fanfare { max-width: 92%; white-space: normal; text-align: center; padding: 8px 16px 8px 12px; }
+  #splash .sp { padding: 10px 20px; font-size: clamp(14px, 3.6vmin, 20px); }
+  .toast { font-size: 12.5px; padding: 7px 12px; }
+  #pickbar { bottom: 14px; bottom: calc(14px + env(safe-area-inset-bottom, 0px)); padding: 10px 14px; font-size: 13px; gap: 10px; max-width: 94vw; }
+  /* 弹窗体系：宽 min(94vw, 原宽)，整窗内滚 */
+  .modal { width: min(94vw, 480px); padding: 18px 16px 16px; max-height: 88vh; }
+  .modal-mask.nomax .modal { max-width: min(94vw, 520px); }
+  .modal-mask.cr-modal .modal { width: 94vw; max-width: 94vw; }
+  .m-title { font-size: 16.5px; }
+  .m-title.big { font-size: 20px; letter-spacing: 3px; }
+  .deed { min-width: 0; }
+  .fcard { width: 200px; height: 276px; }
+  .cr-body { max-height: 52vh; }
+  .cr-who { min-width: 0; flex: 1 1 100%; }
+  .cr-stats { min-width: 0; flex: 1 1 100%; }
+  /* 开始界面：选项面板全宽、CTA 不溢出、hover 气泡在触屏上不再显示 */
+  #start-screen { padding-left: max(2.4vw, env(safe-area-inset-left, 0px)); padding-right: max(2.4vw, env(safe-area-inset-right, 0px)); }
+  .opts { gap: 10px 12px; padding: 14px 12px 12px; width: min(100%, 560px); }
+  .opt-group { flex-wrap: wrap; }
+  #opt-name { width: 140px; }
+  .btn-cta { min-width: min(300px, 88vw); padding-left: 40px; padding-right: 40px; }
+  .start-sub { gap: 8px; }
+  .world-lore { padding-left: 58px; }
+  .char-card::after, .opt-group[data-hint]::after, .opt-group[data-hint]::before { display: none; }
+  #char-grid { grid-template-columns: repeat(2, 158px); }   /* 手机档回到 2 列（≤1099 的 3 列只给 760–1099 的横屏 / 小平板） */
+  .cs-line { gap: 14px; }
+}
+@media (max-height: 520px) {
+  /* 手机横屏：生涯面板不做内滚（86vh−300px 只剩几十像素），改为整窗滚动 */
+  .cr-body { max-height: none; }
+  .modal { max-height: 92vh; }
+}
+
+/* ---- ≤560px：竖屏手机 ---- */
+@media (max-width: 560px) {
+  #hud-season { display: none !important; }
+  .rank-list { min-width: 0; }
+  .rank-row { gap: 8px; padding: 8px 10px; font-size: 14px; }
+  .rk-ava { width: 40px; flex-basis: 40px; height: 42px; }
+  .m-actions { gap: 8px; }
+  .m-actions .btn { flex: 1 1 auto; }
+  .net-box { padding: 16px 14px 18px; }
+  .net-code { font-size: 36px; letter-spacing: 10px; }
+  #char-grid { gap: 14px; }
+  .cr-grid { grid-template-columns: 1fr 1fr; }
+  .cr-stattable { grid-template-columns: 1fr; }
+  .shop-item, .sell-item { flex-wrap: wrap; }
+  .si-btns { flex: 1 1 100%; justify-content: flex-end; }
+}
+/* ---- ≤420px：顶栏 8 个控件（回合章 / 速度 / 音效 / 音乐 / 规则 / 重开 / 主菜单 / 👥）压进 390px，高度仍 ≥40 ---- */
+@media (max-width: 420px) {
+  #topbar { gap: 5px; }
+  .tb-actions { gap: 2px; }
+  .tb-btn { padding: 7px 4px; font-size: 10.5px; }
+  .tb-ico { width: 32px; font-size: 14px; }
+  .tb-speed { min-width: 40px; font-size: 12px; }
+  #side-toggle { width: 40px; font-size: 16px; }
+  #hud-round { font-size: 10px; padding: 4px 6px; letter-spacing: 0; }
+}
+
+/* ---- PSA 影院锁 / 文字净化（psa.js 生成，仅加 CSS）小屏适配 ---- */
+@media (max-width: 760px), (max-height: 520px) {
+  #psa-lock .psa-stage { width: min(96vw, 1120px); padding: 8px 10px; gap: 6px; border-radius: 12px; }
+  #psa-lock .psa-head { font-size: clamp(13px, 3.4vmin, 17px); letter-spacing: 2px; }
+  #psa-lock .psa-media { max-height: 58vh; }
+  #psa-lock video { object-fit: contain; }
+  #psa-lock .psa-start { padding: 12px 24px; min-height: 44px; font-size: clamp(14px, 3.6vmin, 18px); white-space: nowrap; }
+  #psa-lock .psa-text { padding: 14px 5vw; gap: 8px; }
+  #psa-lock .psa-text-ico { font-size: clamp(40px, 10vmin, 80px); }
+  #psa-lock .psa-text-t { font-size: clamp(16px, 4.2vmin, 26px); letter-spacing: 2px; }
+  #psa-lock .psa-text-d { font-size: clamp(12.5px, 2.6vmin, 16px); line-height: 1.6; }
+  #psa-lock .psa-time, #psa-lock .psa-hint, #psa-lock .psa-foot { font-size: 11.5px; }
+}
+@media (max-width: 760px) and (orientation: portrait) {
+  #psa-lock .psa-head em { display: block; margin: 2px 0 0; font-size: .78em; }
+}
+@media (max-height: 520px) {
+  /* 手机横屏：媒体区按可用高度封顶（16:9 会撑爆 390px 高） */
+  #psa-lock .psa-media { aspect-ratio: auto; height: 44vh; max-height: none; }
+  #psa-lock .psa-stage { gap: 4px; padding: 6px 10px; }
+  #psa-lock .psa-foot { font-size: 10.5px; }
+}
+
+/* ---- 100vh → 100dvh（iOS 动态工具栏）：支持 dvh 的浏览器重算棋盘公式与弹窗高度，其余回退 vh ---- */
+@supports (height: 100dvh) {
+  :root { --board: min(calc(100vw - 336px), calc((100dvh - 116px) * 1.4444), 1680px); }
+  @media (max-width: 1280px) { :root { --board: min(calc(100vw - 330px), calc((100dvh - 116px) * 1.4444), 1300px); } }
+  @media (max-width: 1099px) { :root { --board: min(calc(100vw - 24px), calc((100dvh - 128px) * 1.4444), 1680px); } }
+  .modal { max-height: 86dvh; }
+  @media (max-width: 760px) { .modal { max-height: 88dvh; } .cr-body { max-height: 52dvh; } }
+  @media (max-height: 520px) { .cr-body { max-height: none; } .modal { max-height: 92dvh; } }
+}
+
+/* ===================== 强制横屏（触屏竖屏 → 全屏旋转提示，纯 CSS 点亮） ===================== */
+#rotate-hint { display: none; position: fixed; inset: 0; z-index: 3000; background: #0b1f14;
+  flex-direction: column; align-items: center; justify-content: center; gap: 18px; text-align: center; }
+#rotate-hint .rh-t { color: #ffd76a; font: 900 24px/1.4 "Microsoft YaHei", sans-serif; letter-spacing: 6px; }
+#rotate-hint .rh-s { color: #9db8a4; font: 600 13px "Microsoft YaHei", sans-serif; letter-spacing: 2px; }
+#rotate-hint .rh-icon { animation: rh-swing 1.6s ease-in-out infinite; }
+@keyframes rh-swing { 0%, 100% { transform: rotate(-8deg); } 50% { transform: rotate(82deg); } }
+@media (orientation: portrait) and (pointer: coarse) and (max-width: 820px) {
+  #rotate-hint { display: flex; }
+}
