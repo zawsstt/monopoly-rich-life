@@ -94,6 +94,7 @@ const V3D = (() => {
 
   /* ================= 状态 ================= */
   let renderer = null, scene = null, camera = null, controls = null;
+  let sunLight = null;              // 主平行光（画质分档动态调阴影尺寸/开关）
   let container = null, clock = null;
   let running = false, rafId = 0, ready = false;
   let staticRoot = null, dynRoot = null, tokenRoot = null, fxRoot = null;
@@ -118,7 +119,7 @@ const V3D = (() => {
   let fountainTile = -1;
 
   let onTileClickExternal = null;
-  let downPos = null, hoverIdx = -1, prevHoverIdx = -1, lastHoverCast = 0;
+  let hoverIdx = -1, prevHoverIdx = -1, lastHoverCast = 0;
   let followIdx = -1, lastMoveT = 0, userOrbiting = false;
   let lastUserOrbitT = 0;              // 最近一次用户拖拽/滚轮时刻（跟随模式 4s 无操作回归计时）
   let curPhase = '';
@@ -287,6 +288,124 @@ const V3D = (() => {
     if (renderer && renderer.shadowMap) renderer.shadowMap.needsUpdate = true;
   }
 
+  /* ================= 画质分档（移动端 M1）=================
+   * - 自动档：触控设备且小屏（maxTouchPoints>0 且 min(innerWidth,innerHeight)<=820）→ 'mobile'
+   *   （pixelRatio 钳 1.5 / 阴影 1024 / antialias 关——AA 只在创建 renderer 时生效）
+   * - 桌面维持原状 'high'（pixelRatio ≤2 / 阴影 2048 / AA 开）
+   * - ?quality=low|high|medium 强制覆盖（自动探测仍记录在 auto 字段）
+   * - 运行期 FPS 监控：3s 滑动平均 <20fps 持续 5s → 逐级降档（先关阴影 → 再 pixelRatio×0.75），
+   *   每级只降一次、不回升不震荡（perfMon.applied 封顶 2）                              */
+  const qualityState = {
+    tier: 'high', auto: 'high', forced: null,
+    cap: 2,          // pixelRatio 上限（随档位）
+    shadow: 2048,    // 阴影贴图边长（0=关）
+    aa: true,        // antialias（仅创建 renderer 时生效）
+    shadowsOff: false,  // 动态降级 #1：运行期关阴影
+    prScale: 1,         // 动态降级 #2：pixelRatio 乘数 0.75
+  };
+  function tierParams(name) {
+    if (name === 'low') return { cap: 1, shadow: 0, aa: false };
+    if (name === 'mobile') return { cap: 1.5, shadow: 1024, aa: false };
+    if (name === 'medium') return { cap: 1.5, shadow: 1024, aa: true };
+    return { cap: 2, shadow: 2048, aa: true };
+  }
+  function detectQuality() {
+    let forced = null;
+    try {
+      const q = new URLSearchParams(location.search).get('quality');
+      if (q === 'low' || q === 'high' || q === 'medium') forced = q;
+    } catch (e) { /* ignore */ }
+    let touch = false;
+    try { touch = (typeof navigator !== 'undefined' && ((navigator.maxTouchPoints || 0) > 0 || (navigator.msMaxTouchPoints || 0) > 0)); } catch (e) { /* ignore */ }
+    let minDim = 9999;
+    try { minDim = Math.min((window && window.innerWidth) || 9999, (window && window.innerHeight) || 9999); } catch (e) { /* ignore */ }
+    const auto = (touch && minDim <= 820) ? 'mobile' : 'high';
+    return { auto, forced };
+  }
+  function applyPixelRatio() {
+    if (!renderer) return;
+    let dpr = 1;
+    try { dpr = (window && window.devicePixelRatio) || 1; } catch (e) { /* ignore */ }
+    renderer.setPixelRatio(Math.min(dpr, qualityState.cap) * qualityState.prScale);
+  }
+  /* 切换 shadowMap.enabled / castShadow 需要材质重编译（three r147 不自动感知） */
+  function invalidateMaterials() {
+    if (!scene) return;
+    scene.traverse(o => {
+      if (o.isMesh || o.isSprite) {
+        if (Array.isArray(o.material)) o.material.forEach(m => { try { m.needsUpdate = true; } catch (e) { /* ignore */ } });
+        else if (o.material) { try { o.material.needsUpdate = true; } catch (e) { /* ignore */ } }
+      }
+    });
+  }
+  function applyShadowConfig() {
+    if (!renderer) return;
+    const wantOn = qualityState.shadow > 0 && !qualityState.shadowsOff;
+    if (renderer.shadowMap.enabled !== wantOn) {
+      renderer.shadowMap.enabled = wantOn;
+      invalidateMaterials();
+    }
+    if (sunLight) {
+      if (sunLight.castShadow !== wantOn) { sunLight.castShadow = wantOn; invalidateMaterials(); }
+      if (wantOn && qualityState.shadow > 0 && sunLight.shadow.mapSize.x !== qualityState.shadow) {
+        sunLight.shadow.mapSize.set(qualityState.shadow, qualityState.shadow);
+        if (sunLight.shadow.map) {
+          try { sunLight.shadow.map.dispose(); } catch (e) { /* ignore */ }
+          sunLight.shadow.map = null;   // 下次 shadowDirty 按新尺寸重建
+        }
+        shadowDirty();
+      }
+    }
+  }
+  /* 应用档位（可多次调用；renderer 未建时只记录参数，建好后再应用一次） */
+  function applyQualityTier(name) {
+    const p = tierParams(name);
+    qualityState.tier = (name === 'low' || name === 'mobile' || name === 'medium') ? name : 'high';
+    qualityState.cap = p.cap;
+    qualityState.shadow = p.shadow;
+    qualityState.aa = p.aa;
+    applyPixelRatio();
+    applyShadowConfig();
+    return qualityState.tier;
+  }
+  /* ---------- FPS 监控动态降级（迟滞：3s 窗口均值 + 5s 持续 + 每级仅一次） ---------- */
+  const perfMon = { samples: [], lowSince: 0, applied: 0, avgFps: 60 };
+  const PERF_WIN_MS = 3000, PERF_MIN_FPS = 20, PERF_SUSTAIN_MS = 5000, PERF_MIN_SAMPLES = 15;
+  function perfDowngrade() {
+    if (perfMon.applied === 0) {
+      qualityState.shadowsOff = true;
+      applyShadowConfig();
+      perfMon.applied = 1;
+      try { console.info('[view3d] 性能降级 #1：关闭阴影'); } catch (e) { /* ignore */ }
+    } else if (perfMon.applied === 1) {
+      qualityState.prScale = 0.75;
+      applyPixelRatio();
+      perfMon.applied = 2;
+      try { console.info('[view3d] 性能降级 #2：pixelRatio ×0.75'); } catch (e) { /* ignore */ }
+    }
+    /* applied===2：已到底，不再降（不反复） */
+  }
+  function perfTickMs(dtMs, nowOverride) {
+    let now = nowOverride;
+    if (now == null) now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    perfMon.samples.push({ t: now, ms: Math.max(0.1, dtMs) });
+    while (perfMon.samples.length && perfMon.samples[0].t < now - PERF_WIN_MS) perfMon.samples.shift();
+    const n = perfMon.samples.length;
+    if (n < PERF_MIN_SAMPLES) return perfMon.avgFps;   // 样本不足不判定（启动/卡顿尖峰保护）
+    let sum = 0;
+    for (const s of perfMon.samples) sum += s.ms;
+    const avg = n / (sum / 1000);
+    perfMon.avgFps = avg;
+    if (avg < PERF_MIN_FPS) {
+      if (!perfMon.lowSince) perfMon.lowSince = now;
+      else if (now - perfMon.lowSince >= PERF_SUSTAIN_MS) { perfDowngrade(); perfMon.lowSince = 0; }
+    } else {
+      perfMon.lowSince = 0;   // 回到健康帧率 → 重置持续计时（但已降的档不回升）
+    }
+    return avg;
+  }
+  function perfTick(dt) { perfTickMs(dt * 1000); }
+
   /* ---------- 轻量轨道控制（js/lib/OrbitControls 未被 index.html 引入时的兜底） ---------- */
   function MiniOrbit(cam, dom) {
     const self = this;
@@ -299,6 +418,104 @@ const V3D = (() => {
     let des = { r: 50, phi: 0.78, theta: 0 };
     let dragging = false, lx = 0, ly = 0;
     const lastPos = new THREE.Vector3();
+    /* ---- 触控指针管理（Pointer Events，与鼠标路径互斥：pointerType==='touch' 走触控）----
+     * 单指 = 轨道旋转（global 绕目标点 / follow 绕角色，与鼠标拖拽同一套 des/钳制）
+     * 双指捏合 = dolly 缩放（orbitZoom，沿用 global 14–130 / follow 2.6–60 钳制）
+     * 双指拖动 = 平移 target（仅 global；follow 模式忽略平移，避免跟随机位被拖散）
+     * dragging 在任何触控手势期间保持 true：抑制 update() 的 syncFromCamera 覆盖未收敛的 des */
+    const touches = new Map();          // pointerId -> {x, y}
+    let touchOrbitId = null;            // 当前驱动单指轨道的触点
+    let pinchD = 0, pinchCX = 0, pinchCY = 0, pinchDirty = false;
+    this.activeTouches = function () { return touches.size; };
+    this.gestureStats = { orbit: 0, pinch: 0, pan: 0 };   // 诊断计数（冒烟/真机排障）
+    function pinchAnchor() {
+      const pts = Array.from(touches.values());
+      if (pts.length >= 2) {
+        pinchD = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
+        pinchCX = (pts[0].x + pts[1].x) / 2;
+        pinchCY = (pts[0].y + pts[1].y) / 2;
+      }
+      pinchDirty = false;
+    }
+    /* 屏幕像素位移 → target 世界平移（内容跟手：相机反向移动） */
+    function panBy(dx, dy) {
+      if (!dx && !dy) return;
+      const dist = Math.max(2, cam.position.distanceTo(self.target));
+      let elH = 600;
+      try { elH = dom.clientHeight || (window && window.innerHeight) || 600; } catch (e) { /* ignore */ }
+      const s = 2 * dist * Math.tan((cam.fov || 45) * Math.PI / 360) / elH;
+      cam.updateMatrix();   /* 取当前朝向的屏幕右/上基向量（lookAt 只更新四元数） */
+      const right = new THREE.Vector3().setFromMatrixColumn(cam.matrix, 0);
+      const up = new THREE.Vector3().setFromMatrixColumn(cam.matrix, 1);
+      self.target.addScaledVector(right, -dx * s);
+      self.target.addScaledVector(up, dy * s);
+      /* 别把 target 推出桌面太远（与键盘镜头同一边界），高度分量不动 */
+      self.target.x = Math.min(46, Math.max(-46, self.target.x));
+      self.target.z = Math.min(34, Math.max(-34, self.target.z));
+      self.gestureStats.pan++;
+    }
+    /* 双指增量每帧合并结算：两根手指的 pointermove 是分开到达的，逐事件结算会产生瞬时距离畸变
+     * （平行平移时先动的手指让间距先变再复原，靠近 min/maxDistance 钳制边界时缩放会漂移） */
+    function applyPinch() {
+      if (!pinchDirty) return;
+      pinchDirty = false;
+      if (touches.size < 2) return;
+      const pts = Array.from(touches.values());
+      const nd = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
+      if (pinchD > 0 && Math.abs(nd - pinchD) > 0.01) { self.orbitZoom(pinchD / nd); self.gestureStats.pinch++; }
+      const cx = (pts[0].x + pts[1].x) / 2, cy = (pts[0].y + pts[1].y) / 2;
+      if (camMode === 'global') panBy(cx - pinchCX, cy - pinchCY);
+      pinchD = nd; pinchCX = cx; pinchCY = cy;
+    }
+    function touchDown(e, fromOverlay) {
+      if (!self.enabled) return;
+      touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (!fromOverlay) { try { if (dom.setPointerCapture) dom.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ } }
+      if (touches.size === 1) {
+        dragging = true;
+        touchOrbitId = e.pointerId;
+        lx = e.clientX; ly = e.clientY;
+      } else {
+        /* 第二根手指落下 → 单指轨道切捏合/平移（丢掉旋转残余，避免跳变） */
+        dragging = true;
+        touchOrbitId = null;
+        pinchAnchor();
+      }
+    }
+    function touchMove(e) {
+      const p = touches.get(e.pointerId);
+      if (!p || !self.enabled) return;
+      p.x = e.clientX; p.y = e.clientY;
+      if (touches.size >= 2) { pinchDirty = true; return; }
+      if (touchOrbitId !== e.pointerId) return;
+      des.theta -= (e.clientX - lx) * 0.0052;
+      des.phi = Math.min(self.maxPolarAngle, Math.max(self.minPolarAngle, des.phi - (e.clientY - ly) * 0.0038));
+      lx = e.clientX; ly = e.clientY;
+      self.gestureStats.orbit++;
+    }
+    function touchUp(e) {
+      touches.delete(e.pointerId);
+      if (touches.size === 1) {
+        /* 双指收成单指：以剩余触点为新轨道锚点（不跳变） */
+        const rest = Array.from(touches.entries())[0];
+        dragging = true;
+        touchOrbitId = rest[0];
+        lx = rest[1].x; ly = rest[1].y;
+        pinchD = 0; pinchDirty = false;
+      } else if (touches.size === 0) {
+        dragging = false;
+        touchOrbitId = null;
+        pinchD = 0; pinchDirty = false;
+      } else {
+        pinchAnchor();
+      }
+    }
+    function touchCancelAll() {
+      touches.clear();
+      dragging = false;
+      touchOrbitId = null;
+      pinchD = 0; pinchDirty = false;
+    }
 
     this.syncFromCamera = function () {
       const off = cam.position.clone().sub(self.target);
@@ -317,6 +534,7 @@ const V3D = (() => {
     };
     this.update = function (dt) {
       if (!self.enabled) return;
+      applyPinch();   /* 双指捏合/平移：每帧合并结算一次 */
       /* 相机被程序外部移动（follow 跟随 lerp / 运镜收尾）时，从相机现状续接球坐标，
        * 避免旧 cur/des 每帧把相机拽回旧机位 —— 与 OrbitControls 每帧读相机的语义一致 */
       if (!dragging && lastPos.lengthSq() > 0 && cam.position.distanceToSquared(lastPos) > 1e-8) {
@@ -335,9 +553,26 @@ const V3D = (() => {
       cam.lookAt(self.target);
       lastPos.copy(cam.position);
     };
-    dom.addEventListener('pointerdown', e => { if (e.button === 0) { dragging = true; lx = e.clientX; ly = e.clientY; } });
-    window.addEventListener('pointerup', () => { dragging = false; });
+    /* 鼠标路径（保持原行为）：button 0 按下拖拽轨道；touch 走上面的触控路径 */
+    dom.addEventListener('pointerdown', e => {
+      if (e.pointerType === 'touch') { touchDown(e); return; }
+      if (e.button === 0) { dragging = true; lx = e.clientX; ly = e.clientY; }
+    });
+    window.addEventListener('pointerup', e => {
+      if (e.pointerType === 'touch') { touchUp(e); return; }
+      dragging = false;
+    });
+    /* 后续手指落在 canvas 之上的 HUD 浮层（#center-status 等 pointer-events:auto 元素）时，canvas 收不到它的
+     * pointerdown；只要 canvas 上已有触控会话，就让它在 window 层加入手势（不抢它的指针捕获，避免影响 HUD 点击） */
+    window.addEventListener('pointerdown', e => {
+      if (e.pointerType !== 'touch' || !touches.size || touches.has(e.pointerId) || e.target === dom) return;
+      touchDown(e, true);
+    });
+    window.addEventListener('pointercancel', e => {
+      if (e.pointerType === 'touch') touchCancelAll();
+    });
     window.addEventListener('pointermove', e => {
+      if (e.pointerType === 'touch') { touchMove(e); return; }
       if (!dragging || !self.enabled) return;
       des.theta -= (e.clientX - lx) * 0.0052;
       des.phi = Math.min(self.maxPolarAngle, Math.max(self.minPolarAngle, des.phi - (e.clientY - ly) * 0.0038));
@@ -383,9 +618,15 @@ const V3D = (() => {
     container = boardWrapEl || document.getElementById('board-wrap');
     if (!container || typeof THREE === 'undefined') return false;
     if (!renderer) {
-      renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-      renderer.shadowMap.enabled = true;
+      /* 画质分档：创建 renderer 前探测（antialias 只能在创建时决定）。
+       * ?quality=low|high|medium 强制覆盖；触控+小屏自动 mobile；桌面维持原状 high */
+      const q = detectQuality();
+      qualityState.auto = q.auto;
+      qualityState.forced = q.forced;
+      applyQualityTier(q.forced || q.auto);
+      renderer = new THREE.WebGLRenderer({ antialias: qualityState.aa, powerPreference: 'high-performance' });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, qualityState.cap) * qualityState.prScale);
+      renderer.shadowMap.enabled = qualityState.shadow > 0 && !qualityState.shadowsOff;
       renderer.shadowMap.type = THREE.PCFSoftShadowMap;
       renderer.shadowMap.autoUpdate = false;      // 静态场景：仅运动时刷新阴影
       renderer.outputEncoding = THREE.sRGBEncoding;
@@ -396,6 +637,9 @@ const V3D = (() => {
       el.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;z-index:10;display:block;touch-action:none;';
       container.insertBefore(el, container.firstChild);
       bindPointer(el);
+      /* iOS Safari：canvas 上双指会触发页面 gesturestart 缩放（与游戏捏合手势冲突）→ 屏蔽 */
+      el.addEventListener('gesturestart', e => { try { e.preventDefault(); } catch (err) { /* ignore */ } });
+      el.addEventListener('gesturechange', e => { try { e.preventDefault(); } catch (err) { /* ignore */ } });
     /* 键盘辅助视角：WASD/方向键（模块复盘） */
     window.addEventListener('keydown', e => {
       const t = e.target;
@@ -447,12 +691,14 @@ const V3D = (() => {
     scene.add(new THREE.AmbientLight(0xffffff, 0.2));
     const sun = new THREE.DirectionalLight(0xfff1d6, 1.12);
     sun.position.set(26, 44, 18);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
+    const shadowSize = qualityState.shadow > 0 ? qualityState.shadow : 2048;   // 分档：high 2048 / mobile 1024
+    sun.castShadow = qualityState.shadow > 0 && !qualityState.shadowsOff;
+    sun.shadow.mapSize.set(shadowSize, shadowSize);
     sun.shadow.camera.left = -38; sun.shadow.camera.right = 38;
     sun.shadow.camera.top = 38; sun.shadow.camera.bottom = -38;
     sun.shadow.camera.near = 8; sun.shadow.camera.far = 120;
     sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.02;
+    sunLight = sun;
     scene.add(sun);
     const fill = new THREE.DirectionalLight(0xbfd8ff, 0.22);
     fill.position.set(-26, 20, -16);
@@ -2205,30 +2451,68 @@ const V3D = (() => {
     document.head.appendChild(st);
   }
 
-  /* ================= 拾取（Raycaster → 地契弹窗 / 选格） ================= */
+  /* ================= 拾取（Raycaster → 地契弹窗 / 选格） =================
+   * 点按与拖拽区分（移动端 M1）：
+   *   鼠标：位移 ≤6px = 点选（原行为不变）
+   *   触控：短按（<300ms 且位移 <10px）= 点选格子；拖动/长按/多指 = 转镜头（不触发选格）
+   * 触控 pointermove 不做 hover raycast（移动端 move 即拖拽，raycast 纯浪费） */
   function bindPointer(el) {
+    const TAP_MS = 300, MOVE_MOUSE = 6, MOVE_TOUCH = 10;
+    let down = null;              // {x, y, t, ts, touch, id}
+    const touchIds = new Set();   // 本次触控会话中按下的触点（含落在 HUD 浮层上的后续手指）
+    let touchMulti = false;       // 出现过多指 → 整个会话禁点选
+    const evTs = e => (typeof e.timeStamp === 'number' && e.timeStamp > 0) ? e.timeStamp : null;
     el.addEventListener('pointerdown', e => {
-      downPos = { x: e.clientX, y: e.clientY };
+      const isTouch = e.pointerType === 'touch';
+      if (isTouch) {
+        touchIds.add(e.pointerId);
+        if (touchIds.size > 1) touchMulti = true;
+      }
+      /* t=处理时刻兜底；ts=输入时刻（event.timeStamp）——主线程卡顿时短按不会被误判为长按 */
+      down = { x: e.clientX, y: e.clientY, t: performance.now(), ts: evTs(e), touch: isTouch, id: e.pointerId };
       /* 用户接管相机：从当前机位续接球坐标（follow 模式借此暂停跟随驱动且不弹回预设位） */
       beginUserOrbit();
     });
+    /* 第二根手指落在 HUD 浮层上时 canvas 收不到 pointerdown：在 window 层记为多指（本会话禁点选） */
+    window.addEventListener('pointerdown', e => {
+      if (e.pointerType !== 'touch' || !down || !down.touch || e.pointerId === down.id) return;
+      touchIds.add(e.pointerId);
+      touchMulti = true;
+    });
     /* 拖拽中持续刷新"最后操作"计时（按住不动也不会被 4s 回归打断） */
     window.addEventListener('pointermove', e => {
-      if (downPos) markUserOrbit();
+      if (down) markUserOrbit();
     });
     window.addEventListener('pointerup', e => {
-      if (!downPos) return;
-      const moved = Math.hypot(e.clientX - downPos.x, e.clientY - downPos.y);
-      const dp = downPos;
-      downPos = null;
+      const wasTouch = e.pointerType === 'touch';
+      if (wasTouch) touchIds.delete(e.pointerId);
+      const multiNow = touchMulti;
+      if (wasTouch && touchIds.size === 0) touchMulti = false;   // 触控会话结束 → 复位多指标记
+      if (!down || e.pointerId !== down.id) return;   // 非按下触点的弹起（多指）不参与判定
+      const d = down;
+      down = null;
       markUserOrbit();
-      if (moved > 6) return;
+      const moved = Math.hypot(e.clientX - d.x, e.clientY - d.y);
+      if (moved > (d.touch ? MOVE_TOUCH : MOVE_MOUSE)) return;
+      if (d.touch) {
+        const upTs = evTs(e);
+        let dur = (d.ts != null && upTs != null) ? (upTs - d.ts) : NaN;
+        if (!(dur >= 0)) dur = performance.now() - d.t;
+        if (dur > TAP_MS || multiNow || touchIds.size > 0) return;
+      }
       if (e.target !== el) return;
       const rect = el.getBoundingClientRect();
       const ndc = new THREE.Vector2(
         ((e.clientX - rect.left) / rect.width) * 2 - 1,
         -((e.clientY - rect.top) / rect.height) * 2 + 1);
-      pickAt(ndc);
+      pickAt(ndc, d.touch);
+    });
+    window.addEventListener('pointercancel', e => {
+      if (e.pointerType === 'touch') {
+        touchIds.delete(e.pointerId);
+        if (!touchIds.size) touchMulti = false;
+      }
+      if (down && e.pointerId === down.id) down = null;
     });
     /* 滚轮缩放：两种模式即刻生效；follow 模式下从跟随驱动接管（否则 des.r 无帧驱动消费） */
     el.addEventListener('wheel', () => {
@@ -2236,6 +2520,7 @@ const V3D = (() => {
       else markUserOrbit();
     }, { passive: true });
     el.addEventListener('pointermove', e => {
+      if (e.pointerType === 'touch') return;   // 触控端跳过 hover raycast（性能）
       const now = performance.now();
       if (now - lastHoverCast < 60) return;
       lastHoverCast = now;
@@ -2265,8 +2550,24 @@ const V3D = (() => {
     }
     return -1;
   }
-  function pickAt(ndc) {
-    const i = castTile(ndc);
+  /* 触控点按容差：指尖遮挡大、格子在手机屏上投影小——中心射线 miss 时在 ±18px 十字 + 对角补 8 条射线，
+   * 按“离手指近→远”的顺序取首个命中格（仅点按时执行，不在 move 中触发） */
+  const TOUCH_PICK_R = 18;
+  const TOUCH_PICK_OFFS = [[1, 0], [-1, 0], [0, 1], [0, -1], [0.71, 0.71], [-0.71, 0.71], [0.71, -0.71], [-0.71, -0.71]];
+  function castTileTouch(ndc) {
+    let i = castTile(ndc);
+    if (i >= 0 || !renderer) return i;
+    const rect = renderer.domElement.getBoundingClientRect();
+    if (!rect || rect.width < 1 || rect.height < 1) return -1;
+    const dx = TOUCH_PICK_R / rect.width * 2, dy = TOUCH_PICK_R / rect.height * 2;
+    for (const o of TOUCH_PICK_OFFS) {
+      i = castTile(new THREE.Vector2(ndc.x + o[0] * dx, ndc.y - o[1] * dy));
+      if (i >= 0) return i;
+    }
+    return -1;
+  }
+  function pickAt(ndc, touchTap) {
+    const i = touchTap ? castTileTouch(ndc) : castTile(ndc);
     if (i < 0) return;
     if (onTileClickExternal) { onTileClickExternal(i); return; }
     /* 默认行为：转发给 DOM 格子（uix 的地契弹窗 / 选格逻辑原样生效） */
@@ -2422,6 +2723,7 @@ const V3D = (() => {
       if (controls && !followDriving) controls.update(dt);
       /* 跟随/骑乘时相机最低高度 > 沿途建筑最高（~3.0）：低仰角自由轨道也不把镜头压进建筑/地砖内部 */
       if (followActive && camera.position.y < FOLLOW_MIN_Y) camera.position.y = FOLLOW_MIN_Y;
+      perfTick(dt);           /* FPS 滑动均值采样 → 持续低帧自动降档（只采真正渲染的帧） */
       renderer.render(scene, camera);
       updateCenterOverlay();
     };
@@ -2548,6 +2850,19 @@ const V3D = (() => {
     /* 模块E 只读测试钩子：马路环参数 / 环线行走点 / 环线折线 / 环组 */
     roadPointOf, ringPath,
     roadRingGroup: () => roadRing,
+    /* 移动端适配（M1）：画质分档 / 动态降级 / 触控诊断钩子 */
+    applyQualityTier,
+    get quality() {
+      return {
+        tier: qualityState.tier, auto: qualityState.auto, forced: qualityState.forced,
+        pixelRatioCap: qualityState.cap, prScale: qualityState.prScale,
+        shadowSize: qualityState.shadow, shadowsOff: qualityState.shadowsOff, antialias: qualityState.aa,
+        perfApplied: perfMon.applied, avgFps: Math.round(perfMon.avgFps * 10) / 10,
+      };
+    },
+    perfFeed: perfTickMs,
+    perfState: () => ({ applied: perfMon.applied, avgFps: perfMon.avgFps, lowSince: perfMon.lowSince, samples: perfMon.samples.length }),
+    get touchCount() { return (controls && typeof controls.activeTouches === 'function') ? controls.activeTouches() : 0; },
     set onTileClick(fn) { onTileClickExternal = fn; },
     get ready() { return ready; },
     get scene() { return scene; },
