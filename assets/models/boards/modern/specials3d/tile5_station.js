@@ -2,15 +2,17 @@
  * 大富翁·富贵人生 —— 现代写实风棋盘 boards/modern/specials3d/tile5_station.js  格 5「中央车站」
  * -------------------------------------------------------------------------------------
  * 视觉基准：refs/modern/special_5.png（2020s 单象限，写实航拍 3/4 视角现代铁路枢纽）：
- *   中央大厅：银白金属浅拱大屋面（直立锁边细缝 + 3 条纵向玻璃天窗带 + 前后出挑），
- *             正面通高平面外凸弧形玻璃幕墙（竖梃分格、透出暖光候车厅）+ 拱形天窗（钢竖梃翼肋
- *             + 横档 + 拱心大钟）+ 轻薄入口雨棚（钢柱列）+「中央车站」站名牌 + 台阶 + 深色勒脚
- *   两翼    ：白色低层配楼（竖条窗带、平顶女儿墙、屋顶空调机组/楼梯间/避雷针），玻璃连廊接主厅
- *   站后    ：4 组连续白色折板站台雨棚（稀疏钢柱列 + 檐下暖光灯带）+ 3 股轨道（道砟/钢轨）
- *             + 矮接触网门架 ×3 + 停靠银白动车组（深色长窗带/金腰线/圆润车头/受电弓）
- *   站前    ：完整浅色石板广场 + 中央轴线步道 + 绿化床（乔木/灌木/白色缘石）+ 玻璃地铁亭 ×2
- *             + 出租车排队 ×5（黄）+ 公交车 ×2 + 公交亭 ×2 + 前沿沥青环路（虚线/斑马线 ×2/路缘石）
- *             + 路灯 ×4 + 行道树 ×14（前排 8 / 草坪 2 / 轴线 2 / 中庭侧 2）
+ *   中央大厅：银白金属超扁弧大跨屋面（矢跨比 0.16、直立锁边细缝、6 条通长天窗带、前挑盖柱廊）
+ *             + 白色圆柱列 ×10 承托前檐 + 通高外凸玻璃幕墙（15 竖梃 / 5 横档、透出暖光候车厅）
+ *             + 檐口至屋脊的浅弧采光带（钢翼肋 ×10 + 拱心大钟）+ 低位入口雨棚 +「中央车站」站名牌
+ *             + 侧立面下段竖窗板 / 上段玻璃带 + 加宽台阶 + 入口花坛 + 深色勒脚
+ *   两翼    ：白色低层配楼（退后于主厅立面、低于檐口；密排竖条窗带、平顶女儿墙、屋顶天窗带
+ *             / 空调机组 / 楼梯间 / 避雷针）
+ *   站后    ：4 组连续白色大板站台雨棚（出挑盖轨、棚顶通长天窗、钢柱列、檐下暖光灯带、站牌）
+ *             + 3 股轨道（道砟/钢轨/接触网双线）+ 门架 ×3 + 停靠动车组 ×2（长窗带/腰线/圆润车头/受电弓）
+ *   站前    ：冷调石板广场 + 中央轴线步道 + 绿化床 ×2（三簇树冠乔木/灌木/白缘石）+ 草坪带 ×6
+ *             + 行道树阵 22 棵 + 玻璃地铁亭 ×2 + 出租车道与排队 ×5 + 公交场站（平行棚 ×3 + 公交 ×5）
+ *             + 长椅 ×2 + 旅客 ×8 + 前沿沥青环路（虚线/斑马线 ×2/路缘石 ×3）+ 路灯 ×4
  *
  * 注册：window.Special3DModern[5]() → THREE.Group（每次调用全新实例）
  * 契约：占地 ≤2.7×2.7；底面 y=0；正面 +z（站前广场朝 +z）；draw call ≤60；三角 ≤28k；
@@ -19,8 +21,8 @@
  *
  * 工程要点：手写按材质分桶合并 BufferGeometry（r147 无 BufferGeometryUtils）——
  *       静态件全部合并为每材质 1 个 mesh（17 材质桶 + 少量独立小件 ≈ 23 draw call）；
- *       弧形屋面用开口圆柱段（θ 限浅拱角域，UV 按弧长/进深烘焙保证贴图密度）；
- *       端拱用 THREE.Shape 拱形面板（UV 按世界尺寸烘焙）；折板雨棚/斜置幕墙段用旋转盒；
+ *       扁弧屋面用开口圆柱段（θ 限浅拱角域，R 按半跨/矢高反算，UV 按弧长/进深烘焙）；
+ *       端拱用 THREE.Shape 拱形面板（UV 按世界尺寸烘焙）；斜置幕墙段用旋转盒；
  *       文件结构对齐 props3d/prop_1.js 范本。
  *
  * 本轮 R1→R2 变更摘要（对照参考图差距清单逐条清偿）：
@@ -34,6 +36,18 @@
  *   改白色（参考檐口为浅色铝板）；拱部竖梃 6→8；拱玻璃退至幕墙背后消除同面闪烁；
  *   幕墙改平面外凸弧线（5 段折线 + 11 竖梃 + 分段横档，参考立面明显外凸）；补路缘石 ×3、
  *   中庭侧树 ×2（合计 14 棵）；环路内收使占地 2.69 留安全余量。
+ * R3→R4（用户复评未达 90，以参考图重新找差 11 条并清偿）：①矢跨比 0.32→0.16（半跨 0.66、
+ *   矢高 0.21、R≈1.142，正视不再是半圆桶）②主厅加宽（台基 1.44→1.68，占宽 42%→63%）、两翼
+ *   缩窄退后至主厅立面之后并降低（0.46/0.51→0.40/0.44）③屋面天窗带 3→6 条通长（加深色衬底）
+ *   ④屋面前挑至 z 0.40 盖住柱廊，白色圆柱 ×10 直接承檐；低位入口雨棚；站名牌上移至幕墙
+ *   ⑤拱形玻璃降为檐口至屋脊的浅弧采光带（翼肋 8→10）⑥幕墙竖梃 11→15、横档 4→5
+ *   ⑦站台雨棚 0.056→0.13 深大板（出挑盖轨）+ 棚顶天窗带、柱 4→5/棚 ⑧接触网双线 ×3 股
+ *   ⑨草坪带 ×6、树 14→20、出租车道、公交场站（平行棚 ×3 + 公交 ×3）、长椅 ×2、旅客 ×8、
+ *   入口花坛 ×2、台阶加宽 ⑩广场/墙/屋面贴图转冷调、玻璃更蓝 ⑪配楼窗带 4→6 列/周期加密
+ * R4→R5（对照 r4 渲染残余差距 8 条）：①主厅侧立面上段补通高玻璃带 + 钢横档 ②幕墙暖光降温
+ *   （内景贴图/emissive 去橙、玻璃不透明度 0.5→0.6）③站台棚顶天窗加深衬底 ④树冠双球→三簇
+ *   ⑤广场铺装分格密度加倍 ⑥前檐弧肋加厚成封板 ⑦配楼屋顶天窗带 ×2/翼 ⑧站台站牌 ×4；
+ *   东翼前脸退至台基之后消除近共面；末排雨棚收窄使占地 2.68。
  * ==================================================================================== */
 (function () {
 'use strict';
@@ -77,14 +91,14 @@ function speckle(g, w, h, rnd, n, dark, light, mw, mh) {
     g.fillRect((rnd() * w) | 0, (rnd() * h) | 0, 1 + ((rnd() * mw) | 0), 1 + ((rnd() * mh) | 0));
   }
 }
-/* 广场石板：暖白大板 + 十字分缝 + 倒角受光/阴影边 + 色差斑 + 水渍 */
+/* 广场石板：冷调浅灰大板 + 十字分缝 + 倒角受光/阴影边 + 色差斑 + 水渍 */
 function texPave() {
   return cvTex('s5pave', 256, 256, function (g, w, h, rnd) {
-    g.fillStyle = '#b8b2a4'; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#c3c2ba'; g.fillRect(0, 0, w, h);
     var r, c, s = 64;
     for (r = 0; r < 4; r++) for (c = 0; c < 4; c++) {
       var v = 0.9 + rnd() * 0.2, x = c * s, y = r * s;
-      g.fillStyle = 'rgb(' + Math.round(216 * v) + ',' + Math.round(211 * v) + ',' + Math.round(198 * v) + ')';
+      g.fillStyle = 'rgb(' + Math.round(218 * v) + ',' + Math.round(218 * v) + ',' + Math.round(212 * v) + ')';
       g.fillRect(x + 3, y + 3, s - 6, s - 6);
       g.fillStyle = 'rgba(255,253,246,0.3)'; g.fillRect(x + 3, y + 3, s - 6, 2); g.fillRect(x + 3, y + 3, 2, s - 6);
       g.fillStyle = 'rgba(70,66,58,0.22)'; g.fillRect(x + 3, y + s - 5, s - 6, 2); g.fillRect(x + s - 5, y + 3, 2, s - 6);
@@ -107,39 +121,39 @@ function texRoad() {
 /* 浅色混凝土/铝板墙：板缝 + 色斑 + 竖向雨水痕 + 根部污带 */
 function texConc() {
   return cvTex('s5conc', 128, 128, function (g, w, h, rnd) {
-    g.fillStyle = '#d4d2ca'; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#dededa'; g.fillRect(0, 0, w, h);
     speckle(g, w, h, rnd, 110, 'rgba(150,148,140,0.2)', 'rgba(244,242,236,0.24)', 4, 3);
     g.fillStyle = 'rgba(90,90,86,0.22)'; g.fillRect(0, 63, w, 2); g.fillRect(63, 0, 2, h);
     for (var i = 0; i < 4; i++) { g.fillStyle = 'rgba(140,140,134,0.16)'; g.fillRect((rnd() * w) | 0, 0, 2 + ((rnd() * 3) | 0), 30 + ((rnd() * 60) | 0)); }
     g.fillStyle = 'rgba(96,94,88,0.18)'; g.fillRect(0, h - 12, w, 12);
   });
 }
-/* 配楼竖条窗带：白墙 + 窄竖向玻璃条（反光高光/窗台影）+ 横向层间梁 */
+/* 配楼竖条窗带：白墙 + 密排窄竖向玻璃条（反光高光/窗台影）+ 横向层间梁 */
 function texWin() {
   return cvTex('s5win', 128, 128, function (g, w, h, rnd) {
-    g.fillStyle = '#e6e4dc'; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#e8e6de'; g.fillRect(0, 0, w, h);
     speckle(g, w, h, rnd, 50, 'rgba(176,174,164,0.2)', 'rgba(250,248,242,0.2)', 8, 5);
     var i;
-    for (i = 0; i < 4; i++) {
-      var x = i * 32;
-      g.fillStyle = '#4a6272'; g.fillRect(x + 11, 8, 11, 106);
-      g.fillStyle = 'rgba(205,226,236,0.6)'; g.fillRect(x + 12, 10, 3, 102);
-      g.fillStyle = 'rgba(30,44,54,0.55)'; g.fillRect(x + 19, 8, 3, 106);
-      g.fillStyle = 'rgba(244,242,234,0.95)'; g.fillRect(x + 9, 114, 15, 3);
-      g.fillStyle = 'rgba(70,70,66,0.3)'; g.fillRect(x + 9, 117, 15, 2);
+    for (i = 0; i < 6; i++) {
+      var x = i * 21;
+      g.fillStyle = '#486078'; g.fillRect(x + 7, 6, 9, 110);
+      g.fillStyle = 'rgba(200,224,238,0.65)'; g.fillRect(x + 8, 8, 2, 106);
+      g.fillStyle = 'rgba(28,42,56,0.55)'; g.fillRect(x + 13, 6, 2, 110);
+      g.fillStyle = 'rgba(244,242,234,0.95)'; g.fillRect(x + 5, 116, 13, 3);
+      g.fillStyle = 'rgba(70,70,66,0.3)'; g.fillRect(x + 5, 119, 13, 2);
     }
     g.fillStyle = 'rgba(100,102,100,0.25)';
-    for (i = 0; i < 3; i++) g.fillRect(0, 8 + i * 38, w, 2);
+    for (i = 0; i < 4; i++) g.fillRect(0, 4 + i * 31, w, 2);
   });
 }
 /* 金属屋面：银白直立锁边板（细缝双线 + 板面亮色差 + 淡横向咬口） */
 function texVault() {
   return cvTex('s5vault', 256, 256, function (g, w, h, rnd) {
-    g.fillStyle = '#d0d6dc'; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#d8dee4'; g.fillRect(0, 0, w, h);
     var i;
     for (i = 0; i < 16; i++) {
       var x = i * 16, v = 0.96 + rnd() * 0.1;
-      g.fillStyle = 'rgb(' + Math.round(214 * v) + ',' + Math.round(220 * v) + ',' + Math.round(226 * v) + ')';
+      g.fillStyle = 'rgb(' + Math.round(220 * v) + ',' + Math.round(226 * v) + ',' + Math.round(232 * v) + ')';
       g.fillRect(x + 2, 0, 14, h);
       g.fillStyle = 'rgba(250,252,255,0.65)'; g.fillRect(x + 4, 0, 2, h);
       g.fillStyle = 'rgba(140,148,156,0.32)'; g.fillRect(x, 0, 1, h);
@@ -155,7 +169,7 @@ function texGlass() {
   return cvTex('s5glass', 128, 128, function (g, w, h) {
     for (var x = 0; x < w; x++) {
       var t = x / w, v = 0.86 + 0.16 * Math.sin(t * 6.283 * 1.4 + 0.5) + 0.04 * Math.sin(t * 36);
-      g.fillStyle = 'rgb(' + Math.round(150 * v) + ',' + Math.round(180 * v) + ',' + Math.round(194 * v) + ')';
+      g.fillStyle = 'rgb(' + Math.round(136 * v) + ',' + Math.round(170 * v) + ',' + Math.round(198 * v) + ')';
       g.fillRect(x, 0, 1, h);
     }
     g.fillStyle = 'rgba(40,58,68,0.2)';
@@ -187,8 +201,8 @@ function texLeaf() {
 /* 候车厅内景（map + emissiveMap）：暖光地面/立柱/旅客/吊顶灯带 */
 function texHall() {
   return cvTex('s5hall', 256, 128, function (g, w, h, rnd) {
-    g.fillStyle = '#f7dfae'; g.fillRect(0, 0, w, h);
-    g.fillStyle = 'rgba(214,166,96,0.5)'; g.fillRect(0, 86, w, 42);
+    g.fillStyle = '#f3e7cc'; g.fillRect(0, 0, w, h);
+    g.fillStyle = 'rgba(198,170,124,0.42)'; g.fillRect(0, 86, w, 42);
     var i;
     for (i = 0; i < 7; i++) {
       var x = 14 + i * 36 + ((rnd() * 6) | 0);
@@ -226,7 +240,7 @@ function mats() {
     conc:    M('#ffffff', { map: texConc(), rough: 0.9, ds: true }),
     winWall: M('#ffffff', { map: texWin(), rough: 0.8, ds: true }),
     vault:   M('#ffffff', { map: texVault(), rough: 0.5, metal: 0.25, ds: true }),
-    glass:   M('#ffffff', { map: texGlass(), rough: 0.06, metal: 0.7, tr: 0.5 }),
+    glass:   M('#ffffff', { map: texGlass(), rough: 0.06, metal: 0.7, tr: 0.6 }),
     white:   M('#eceae2', { rough: 0.6 }),
     steel:   M('#7a828a', { rough: 0.45, metal: 0.7 }),
     dark:    M('#2b3034', { rough: 0.6, metal: 0.2 }),
@@ -289,7 +303,7 @@ function boxUV(g, w, h, d, sc) {
     uv.setXY(i, uv.getX(i) * dims[f][0] * sc, uv.getY(i) * dims[f][1] * sc);
   }
 }
-var SC = { pave: 0.85, road: 3.3, conc: 1.3, win: 1.6, vault: 1.0, glass: 1.2, ballast: 4 };
+var SC = { pave: 1.6, road: 3.3, conc: 1.3, win: 1.6, vault: 1.0, glass: 1.2, ballast: 4 };
 Bag.prototype.box = function (key, w, h, d, x, y, z, rx, ry, rz, sc) {
   var g = new THREE.BoxGeometry(w, h, d);
   boxUV(g, w, h, d, sc !== undefined ? sc : SC.conc);
@@ -372,11 +386,12 @@ function clockFaceMesh(r) {
 }
 
 /* ================= 5. 预制构件 ================= */
-/* 行道树（干 + 双球冠） */
+/* 行道树（干 + 三簇层叠树冠） */
 function tree(bag, x, z, s) {
   bag.cyl('trunk', 0.02 * s, 0.028 * s, 0.26 * s, x, 0.05 + 0.13 * s, z, 0, 0, 0, 8);
   bag.sph('green', 0.15 * s, x, 0.05 + 0.32 * s, z, 12, 9);
   bag.sph('green2', 0.105 * s, x + 0.07 * s, 0.05 + 0.24 * s, z + 0.04 * s, 10, 8);
+  bag.sph('green', 0.09 * s, x - 0.07 * s, 0.05 + 0.27 * s, z - 0.05 * s, 10, 8);
 }
 function shrub(bag, x, z, s) {
   bag.sph('hedge', s, x, 0.05 + s * 0.7, z, 10, 8);
@@ -416,13 +431,6 @@ function bus(bag, x, z, alongZ) {
     bag.box('dark', W - 0.014, 0.014, L - 0.02, x, 0.069, z);
   }
 }
-/* 公交亭（雨棚 + 背板玻璃 + 立柱） */
-function busStop(bag, x, z) {
-  bag.box('white', 0.062, 0.008, 0.16, x, 0.125, z, 0, 0, 0);
-  bag.box('glass', 0.005, 0.05, 0.15, x + 0.026, 0.095, z);
-  bag.cyl('steel', 0.005, 0.005, 0.075, x - 0.024, 0.0875, z - 0.07, 0, 0, 0, 6);
-  bag.cyl('steel', 0.005, 0.005, 0.075, x - 0.024, 0.0875, z + 0.07, 0, 0, 0, 6);
-}
 /* 玻璃地铁亭（玻璃盒 + 钢框角柱 + 顶沿 + 门洞） */
 function metroBox(bag, x, z) {
   bag.box('glass', 0.22, 0.095, 0.1, x, 0.0975, z);
@@ -434,6 +442,17 @@ function metroBox(bag, x, z) {
   bag.box('steel', 0.236, 0.01, 0.124, x, 0.052, z);
   bag.box('dark', 0.05, 0.07, 0.008, x + 0.06, 0.085, z + 0.051);
 }
+/* 旅客小人（色块身 + 头；top 为衣服材质桶名） */
+function person(bag, x, z, top) {
+  bag.cyl(top, 0.009, 0.011, 0.036, x, 0.068, z, 0, 0, 0, 6);
+  bag.sph('dark', 0.009, x, 0.093, z, 8, 6);
+}
+/* 长椅（座板 + 腿） */
+function bench(bag, x, z) {
+  bag.box('dark', 0.05, 0.008, 0.14, x, 0.068, z);
+  bag.box('steel', 0.04, 0.026, 0.012, x, 0.055, z - 0.05);
+  bag.box('steel', 0.04, 0.026, 0.012, x, 0.055, z + 0.05);
+}
 
 /* ================= 6. 工厂 ================= */
 window.Special3DModern[5] = function () {
@@ -442,23 +461,24 @@ window.Special3DModern[5] = function () {
   var bag = new Bag();
   var i, sx, k;
 
-  /* —— 大厅几何常量：浅拱 R/矢高/轴心/檐口 —— */
-  var HW = 0.72;                        /* 台基半宽 */
-  var R = 0.6156, RISE = 0.36;          /* 拱半径 / 矢高（浅拱：半跨 0.56、矢跨比 0.32，参考为扁弧大跨） */
+  /* —— 大厅几何常量：扁弧大跨拱（R/矢高/轴心/檐口）—— 参考为超扁弧屋面、主厅占宽 ~3/4 */
+  var HW = 0.84;                        /* 台基半宽（主厅加宽） */
+  var A = 0.66, RISE = 0.21;            /* 檐口半跨 / 矢高（矢跨比 0.159，参考扁弧） */
+  var R = (A * A + RISE * RISE) / (2 * RISE); /* 拱半径 ≈1.142（按半跨/矢高反算） */
   var YE = 0.70;                        /* 檐口高（幕墙顶） */
-  var YC = YE - (R - RISE);             /* 拱心 y ≈ 0.444 */
-  var PHI = Math.acos((R - RISE) / R);  /* 半弧角 1.287rad */
-  var A = R * Math.sin(PHI);            /* 檐口半跨 ≈0.56 */
-  var AZ = -0.275, ALEN = 0.93;         /* 屋面轴心 z / 进深（前后出挑） */
-  var TOP = YC + R;                     /* 屋面顶 ≈1.12 */
+  var YC = YE - (R - RISE);             /* 拱心 y ≈ -0.232（扁弧圆心低于台基顶） */
+  var PHI = Math.acos((R - RISE) / R);  /* 半弧角 ≈0.616rad */
+  var AZ = -0.195, ALEN = 1.19;         /* 屋面轴心 z / 进深（前挑盖住柱廊 -0.79..0.40） */
+  var TOP = YC + R;                     /* 屋面顶 ≈0.91 */
 
   /* ========== 6.1 沙盘基座：广场石板（底面 y=0） ========== */
   bag.box('pave', 2.68, 0.05, 2.68, 0, 0.025, 0, 0, 0, 0, SC.pave);
 
-  /* ========== 6.2 站前广场：前沿环路 + 斑马线 + 轴线步道 + 绿化床 + 树列 ========== */
+  /* ========== 6.2 站前广场：前沿环路 + 斑马线 + 轴线步道 + 绿化床草坪 + 树阵 ========== */
   bag.box('road', 2.68, 0.004, 0.2, 0, 0.052, 1.22, 0, 0, 0, SC.road);                  /* 前环路（贴前沿） */
   bag.box('road', 0.21, 0.004, 1.17, -1.235, 0.0522, 0.735, 0, 0, 0, SC.road);          /* 西环路 */
   bag.box('road', 0.21, 0.004, 1.17, 1.235, 0.0522, 0.735, 0, 0, 0, SC.road);           /* 东环路 */
+  bag.box('road', 0.7, 0.004, 0.09, -0.82, 0.0521, 0.86, 0, 0, 0, SC.road);             /* 出租车排队道 */
   bag.box('white', 2.68, 0.006, 0.012, 0, 0.056, 1.114);                                /* 路缘石 ×3 */
   bag.box('white', 0.012, 0.006, 0.97, -1.127, 0.056, 0.635);
   bag.box('white', 0.012, 0.006, 0.97, 1.127, 0.056, 0.635);
@@ -467,29 +487,51 @@ window.Special3DModern[5] = function () {
     bag.box('white', 0.03, 0.0025, 0.16, 0.49 + i * 0.03, 0.0553, 1.22);
   }
   bag.box('conc', 0.36, 0.003, 0.68, 0, 0.0515, 0.62, 0, 0, 0, SC.pave);                /* 轴线步道 */
-  for (sx = -1; sx <= 1; sx += 2) {                                                     /* 绿化床 ×2 + 白缘石 */
-    bag.box('hedge', 0.4, 0.008, 0.34, sx * 0.5, 0.054, 0.5);
-    bag.box('white', 0.42, 0.01, 0.014, sx * 0.5, 0.055, 0.335);
-    bag.box('white', 0.42, 0.01, 0.014, sx * 0.5, 0.055, 0.665);
-    bag.box('white', 0.014, 0.01, 0.34, sx * 0.5 - sx * 0.203, 0.055, 0.5);
-    bag.box('white', 0.014, 0.01, 0.34, sx * 0.5 + sx * 0.203, 0.055, 0.5);
-    tree(bag, sx * 0.5, 0.5, 0.7);
-    shrub(bag, sx * 0.4, 0.42, 0.035);
-    shrub(bag, sx * 0.62, 0.6, 0.03);
+  for (sx = -1; sx <= 1; sx += 2) {                                                     /* 绿化床 ×2（离台阶留开敞广场）+ 白缘石 */
+    bag.box('hedge', 0.4, 0.008, 0.34, sx * 0.5, 0.054, 0.62);
+    bag.box('white', 0.42, 0.01, 0.014, sx * 0.5, 0.055, 0.455);
+    bag.box('white', 0.42, 0.01, 0.014, sx * 0.5, 0.055, 0.785);
+    bag.box('white', 0.014, 0.01, 0.34, sx * 0.5 - sx * 0.203, 0.055, 0.62);
+    bag.box('white', 0.014, 0.01, 0.34, sx * 0.5 + sx * 0.203, 0.055, 0.62);
+    tree(bag, sx * 0.5, 0.62, 0.7);
+    tree(bag, sx * 0.42, 0.74, 0.5);
+    tree(bag, sx * 0.58, 0.5, 0.5);
+    shrub(bag, sx * 0.4, 0.54, 0.035);
+    shrub(bag, sx * 0.62, 0.72, 0.03);
   }
+  /* 前排草坪带 ×6 + 行道树阵（参考为格状树阵+草坪色块） */
+  bag.box('green2', 0.2, 0.004, 0.13, -0.14, 0.0525, 0.95, 0, 0, 0, 2.4);
+  bag.box('green2', 0.2, 0.004, 0.13, 0.14, 0.0525, 0.95, 0, 0, 0, 2.4);
+  bag.box('green2', 0.5, 0.004, 0.13, -0.5, 0.0525, 0.95, 0, 0, 0, 2.4);
+  bag.box('green2', 0.5, 0.004, 0.13, 0.5, 0.0525, 0.95, 0, 0, 0, 2.4);
+  bag.box('green2', 0.44, 0.004, 0.13, -1.02, 0.0525, 0.95, 0, 0, 0, 2.4);
+  bag.box('green2', 0.44, 0.004, 0.13, 1.02, 0.0525, 0.95, 0, 0, 0, 2.4);
   tree(bag, -0.14, 0.95, 0.62); tree(bag, 0.14, 0.95, 0.62);                            /* 前排行道树 ×8 */
   tree(bag, -0.5, 0.95, 0.62); tree(bag, 0.5, 0.95, 0.62);
   tree(bag, -0.86, 0.95, 0.62); tree(bag, 0.86, 0.95, 0.62);
   tree(bag, -1.18, 0.95, 0.62); tree(bag, 1.18, 0.95, 0.62);
   tree(bag, -0.32, 1.02, 0.58); tree(bag, 0.32, 1.02, 0.58);                            /* 轴线对树 ×2 */
-  tree(bag, -0.74, 0.7, 0.62); tree(bag, 0.74, 0.7, 0.62);                              /* 中庭侧树 ×2 */
-  shrub(bag, -0.6, 0.3, 0.045); shrub(bag, 0.6, 0.3, 0.045);
+  tree(bag, -0.68, 0.95, 0.55); tree(bag, 0.68, 0.95, 0.55);                            /* 草坪补树 ×2 */
+  tree(bag, -0.8, 0.32, 0.6); tree(bag, 0.8, 0.32, 0.6);                                /* 两翼前侧树 ×2 */
+  shrub(bag, -0.6, 0.36, 0.045); shrub(bag, 0.6, 0.36, 0.045);
   shrub(bag, -0.26, 0.98, 0.035); shrub(bag, 0.26, 0.98, 0.035);
   metroBox(bag, -0.34, 0.84); metroBox(bag, 0.34, 0.84);                                /* 玻璃地铁亭 ×2 */
-  for (i = 0; i < 5; i++) taxi(bag, -0.86 + i * 0.13, 0.78);                            /* 出租车排队 ×5 */
-  bus(bag, 0.9, 1.22, false);                                                           /* 公交 ×2 */
-  bus(bag, 1.24, 0.42, true);
-  busStop(bag, 0.86, 0.52); busStop(bag, 0.86, 0.8);                                    /* 公交亭 ×2 */
+  for (i = 0; i < 5; i++) taxi(bag, -1.1 + i * 0.13, 0.86);                             /* 出租车排队 ×5 */
+  bus(bag, 0.9, 1.22, false);                                                           /* 前环路公交 */
+  bus(bag, 1.24, 0.42, true);                                                           /* 东环路公交 */
+  for (k = 0; k < 3; k++) {                                                             /* 公交场站：平行棚 ×3 + 公交 ×3 */
+    var bz = 0.86 + k * 0.13;
+    bag.box('white', 0.09, 0.006, 0.3, bz, 0.132, 0.5);
+    bag.box('glass', 0.055, 0.05, 0.26, bz, 0.102, 0.5);
+    bag.cyl('steel', 0.004, 0.004, 0.07, bz - 0.035, 0.09, 0.365, 0, 0, 0, 6);
+    bag.cyl('steel', 0.004, 0.004, 0.07, bz + 0.035, 0.09, 0.365, 0, 0, 0, 6);
+    bus(bag, bz, 0.5, true);
+  }
+  bench(bag, -0.26, 0.62); bench(bag, 0.26, 0.62);                                      /* 轴线长椅 ×2 */
+  person(bag, -0.12, 0.26, 'blue'); person(bag, 0.1, 0.3, 'yellow');                    /* 旅客 ×8 */
+  person(bag, -0.05, 0.48, 'dark'); person(bag, 0.07, 0.55, 'blue');
+  person(bag, 0.12, 0.72, 'yellow'); person(bag, -0.3, 0.7, 'dark');
+  person(bag, 0.45, 0.66, 'blue'); person(bag, -0.45, 0.24, 'yellow');
   lampPost(bag, -1.02, 1.05, 1); lampPost(bag, 1.02, 1.05, -1);                         /* 路灯 ×4 */
   lampPost(bag, -0.32, 0.3, 1); lampPost(bag, 0.32, 0.3, -1);
   bag.cyl('steel', 0.009, 0.009, 0.055, -0.55, 0.0775, 0.3, 0, 0, 0, 8);                /* 入口矮柱 ×2 */
@@ -497,130 +539,143 @@ window.Special3DModern[5] = function () {
   bag.cyl('steel', 0.009, 0.009, 0.055, 0.55, 0.0775, 0.3, 0, 0, 0, 8);
   bag.cyl('white', 0.01, 0.01, 0.012, 0.55, 0.1, 0.3, 0, 0, 0, 8);
 
-  /* ========== 6.3 中央大厅：台基/台阶/勒脚 + 幕墙 + 浅拱屋面 + 拱形天窗 + 大钟 ========== */
+  /* ========== 6.3 中央大厅：台基/台阶/勒脚 + 通高幕墙柱廊 + 扁拱屋面 + 浅弧天窗带 + 大钟 ========== */
   bag.box('conc', HW * 2, 0.12, 0.88, 0, 0.11, -0.31, 0, 0, 0, SC.conc);                /* 台基 z -0.75..0.13 */
   bag.box('dark', HW * 2 + 0.016, 0.03, 0.896, 0, 0.065, -0.31);                        /* 勒脚 */
-  bag.box('conc', 1.06, 0.08, 0.05, 0, 0.09, 0.155);                                    /* 台阶 ×2 */
-  bag.box('conc', 1.06, 0.04, 0.05, 0, 0.07, 0.21);
-  /* 通高玻璃幕墙：平面外凸弧线（5 段折线逼近，矢高 0.03）+ 钢竖梃 ×11 / 分段横档 ×4 */
-  var segW = 0.228, kk = 0.147, j, xj, zj, ryj, nx, nz;
+  bag.box('conc', 1.3, 0.08, 0.05, 0, 0.09, 0.155);                                     /* 台阶 ×2（加宽） */
+  bag.box('conc', 1.3, 0.04, 0.05, 0, 0.07, 0.21);
+  bag.box('white', 0.12, 0.05, 0.12, -0.76, 0.075, 0.175);                              /* 入口花坛 ×2 */
+  bag.sph('hedge', 0.045, -0.76, 0.12, 0.175, 10, 8);
+  bag.box('white', 0.12, 0.05, 0.12, 0.76, 0.075, 0.175);
+  bag.sph('hedge', 0.045, 0.76, 0.12, 0.175, 10, 8);
+  /* 通高玻璃幕墙：平面外凸弧线（5 段折线，矢高 0.03）+ 密排钢竖梃 ×15 / 横档 ×5 */
+  var segW = 0.264, kk = 0.147, j, xj, zj, ryj, nx, nz;
   for (j = -2; j <= 2; j++) {
     xj = j * segW; zj = 0.146 - kk * xj * xj; ryj = Math.atan(2 * kk * xj);
     nx = Math.sin(ryj) * 0.013; nz = Math.cos(ryj) * 0.013;
     bag.box('glass', segW, 0.53, 0.024, xj, 0.435, zj, 0, ryj, 0, SC.glass);
-    bag.box('steel', segW, 0.012, 0.014, xj + nx, 0.635, zj + nz, 0, ryj, 0);
-    bag.box('steel', segW, 0.012, 0.014, xj + nx, 0.475, zj + nz, 0, ryj, 0);
-    bag.box('steel', segW, 0.012, 0.014, xj + nx, 0.31, zj + nz, 0, ryj, 0);
-    bag.box('steel', segW, 0.016, 0.014, xj + nx, 0.185, zj + nz, 0, ryj, 0);
+    bag.box('steel', segW, 0.012, 0.014, xj + nx, 0.645, zj + nz, 0, ryj, 0);
+    bag.box('steel', segW, 0.012, 0.014, xj + nx, 0.55, zj + nz, 0, ryj, 0);
+    bag.box('steel', segW, 0.012, 0.014, xj + nx, 0.44, zj + nz, 0, ryj, 0);
+    bag.box('steel', segW, 0.012, 0.014, xj + nx, 0.32, zj + nz, 0, ryj, 0);
+    bag.box('steel', segW, 0.016, 0.014, xj + nx, 0.2, zj + nz, 0, ryj, 0);
   }
-  var finX = [-0.57, -0.456, -0.342, -0.228, -0.114, 0, 0.114, 0.228, 0.342, 0.456, 0.57];
-  for (j = 0; j < finX.length; j++) {
-    xj = finX[j]; zj = 0.146 - kk * xj * xj; ryj = Math.atan(2 * kk * xj);
-    bag.box('steel', 0.014, 0.53, 0.016, xj + Math.sin(ryj) * 0.014, 0.435, zj + Math.cos(ryj) * 0.014, 0, ryj, 0);
+  for (j = -7; j <= 7; j++) {
+    xj = j * 0.088; zj = 0.146 - kk * xj * xj; ryj = Math.atan(2 * kk * xj);
+    bag.box('steel', 0.012, 0.53, 0.014, xj + Math.sin(ryj) * 0.013, 0.435, zj + Math.cos(ryj) * 0.013, 0, ryj, 0);
   }
-  /* 浅拱金属屋面（前后出挑）+ 檐口白边 + 端拱弧肋 */
+  /* 扁拱金属屋面（前后大出挑盖住柱廊）+ 檐口白边 + 端拱弧肋 */
   bag.vault('vault', R, ALEN, PI - PHI, PHI * 2, 0, YC, AZ);
   bag.box('white', 0.02, 0.02, ALEN, -A - 0.004, YE, AZ);
   bag.box('white', 0.02, 0.02, ALEN, A + 0.004, YE, AZ);
-  bag.torus('white', R + 0.004, 0.012, 0, YC, 0.19, 30, PI - 2 * Math.atan2(YE - YC, A), Math.atan2(YE - YC, A));
-  bag.torus('white', R + 0.004, 0.012, 0, YC, -0.74, 30, PI - 2 * Math.atan2(YE - YC, A), Math.atan2(YE - YC, A));
-  /* 拱形端天窗（前玻璃，退于幕墙之后 + 后封板）+ 拱部钢竖梃翼肋 ×6 + 横档 ×2 */
+  bag.torus('white', R + 0.004, 0.022, 0, YC, AZ + ALEN / 2, 30, PI - 2 * Math.atan2(YE - YC, A), Math.atan2(YE - YC, A));
+  bag.torus('white', R + 0.004, 0.012, 0, YC, AZ - ALEN / 2, 30, PI - 2 * Math.atan2(YE - YC, A), Math.atan2(YE - YC, A));
+  /* 浅弧采光带（幕墙顶至屋脊的扁弧玻璃，参考立面顶部随屋面微拱）+ 钢竖梃翼肋 ×10 + 横档 ×2 */
   bag.arch('glass', A, YE, YE, R, YC, 0, 0.126, false, SC.glass);
   bag.arch('conc', A - 0.004, 0.17, YE, R - 0.004, YC, 0, -0.745, true, SC.conc);
-  var mullX = [-0.49, -0.42, -0.28, -0.14, 0.14, 0.28, 0.42, 0.49];
-  for (i = 0; i < 8; i++) {
+  var mullX = [-0.55, -0.44, -0.33, -0.22, -0.11, 0.11, 0.22, 0.33, 0.44, 0.55];
+  for (i = 0; i < 10; i++) {
     var mx = mullX[i], myTop = YC + Math.sqrt(R * R - mx * mx);
     bag.box('steel', 0.012, myTop - YE, 0.012, mx, (myTop + YE) / 2, 0.132);
   }
-  bag.box('steel', 1.02, 0.012, 0.012, 0, 0.78, 0.132);
-  bag.box('steel', 0.6, 0.012, 0.012, 0, 0.98, 0.132);
-  /* 屋面天窗带 ×3（玻璃条 + 白色脊帽，随弧面切线斜置） */
-  var skx = [-0.22, 0, 0.22];
-  for (i = 0; i < 3; i++) {
+  bag.box('steel', 1.12, 0.012, 0.012, 0, 0.745, 0.132);
+  bag.box('steel', 0.66, 0.012, 0.012, 0, 0.845, 0.132);
+  /* 屋面天窗带 ×6（深色衬底 + 玻璃条 + 白色脊帽，随弧面切线斜置，参考 6~7 条通长带） */
+  var skx = [-0.5, -0.3, -0.1, 0.1, 0.3, 0.5];
+  for (i = 0; i < 6; i++) {
     var x0 = skx[i];
     var dysq = R * R - x0 * x0, sq = Math.sqrt(dysq);
     var th = PI - Math.atan2(x0, sq);                                                   /* 该点 θ 角 */
     var ys = YC - R * Math.cos(th);
     var tilt = Math.atan2(-x0, sq);
-    bag.box('glass', 0.05, 0.012, 0.9, x0, ys + 0.006, AZ, 0, 0, tilt, SC.glass);
-    bag.box('white', 0.02, 0.018, 0.9, x0, ys + 0.012, AZ, 0, 0, tilt);
+    bag.box('dark', 0.052, 0.006, 1.1, x0, ys + 0.003, AZ, 0, 0, tilt);
+    bag.box('glass', 0.05, 0.012, 1.1, x0, ys + 0.008, AZ, 0, 0, tilt, SC.glass);
+    bag.box('white', 0.02, 0.018, 1.1, x0, ys + 0.013, AZ, 0, 0, tilt);
   }
-  /* 台基侧平顶（拱脚外两条）+ 台基侧墙竖窗板 */
+  /* 台基侧平顶（拱脚外两条）+ 台基侧墙：下段竖窗板 + 上段通高玻璃带（参考侧立面亦为幕墙） */
   for (sx = -1; sx <= 1; sx += 2) {
-    bag.box('white', 0.16, 0.014, 0.9, sx * 0.64, YE + 0.008, AZ);
-    bag.box('winWall', 0.012, 0.26, 0.7, sx * 0.727, 0.3, -0.31, 0, 0, 0, SC.win);
+    bag.box('white', 0.18, 0.014, ALEN, sx * 0.75, YE + 0.008, AZ);
+    bag.box('winWall', 0.012, 0.26, 0.78, sx * 0.833, 0.3, -0.31, 0, 0, 0, SC.win);
+    bag.box('glass', 0.012, 0.27, 0.78, sx * 0.835, 0.565, -0.31, 0, 0, 0, SC.glass);
+    bag.box('steel', 0.018, 0.012, 0.78, sx * 0.836, 0.43, -0.31);
+    bag.box('steel', 0.018, 0.012, 0.78, sx * 0.836, 0.57, -0.31);
   }
-  /* 入口雨棚（轻薄白板 + 白檐口 + 钢柱列） */
-  bag.box('white', 1.34, 0.012, 0.3, 0, 0.562, 0.31);
-  bag.box('white', 1.34, 0.07, 0.01, 0, 0.524, 0.462);
-  bag.box('steel', 1.34, 0.012, 0.012, 0, 0.486, 0.462);
-  for (i = 0; i < 6; i++) bag.cyl('steel', 0.01, 0.01, 0.506, -0.6 + i * 0.24, 0.303, 0.42, 0, 0, 0, 10);
-  /* 站名牌（雨棚檐口） */
-  var sign = signMesh('中央车站', 0.46, 0.062);
-  sign.position.set(0, 0.524, 0.469); g.add(sign);
-  /* 拱心大钟（钢圈 + 盘面 + 时/分针 + 中轴） */
-  bag.torus('steel', 0.075, 0.008, 0, 0.84, 0.132, 24, PI * 2, 0);
-  var faceM = clockFaceMesh(0.07); faceM.position.set(0, 0.84, 0.13); g.add(faceM);
-  var minH = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.056, 0.004).translate(0, 0.024, 0), mats().dark);
-  minH.position.set(0, 0.84, 0.134); g.add(minH);
-  var hrH = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.04, 0.004).translate(0, 0.016, 0), mats().dark);
-  hrH.position.set(0, 0.84, 0.133); g.add(hrH);
-  bag.cyl('steel', 0.007, 0.007, 0.008, 0, 0.84, 0.136, PI / 2, 0, 0, 10);
+  /* 正面通宽柱廊：白色圆柱列 ×10 直接承托屋面前挑（参考柱列托檐）+ 低位轻薄入口雨棚 */
+  for (i = 0; i < 10; i++) bag.cyl('white', 0.012, 0.012, 0.65, -0.63 + i * 0.14, 0.375, 0.37, 0, 0, 0, 12);
+  bag.box('white', 1.1, 0.012, 0.18, 0, 0.4, 0.26);
+  bag.box('white', 1.1, 0.045, 0.012, 0, 0.38, 0.35);
+  bag.box('steel', 1.1, 0.01, 0.01, 0, 0.352, 0.352);
+  /* 站名牌（幕墙上方、入口雨棚之上，参考站名置于立面正中） */
+  var sign = signMesh('中央车站', 0.56, 0.075);
+  sign.position.set(0, 0.58, 0.172); g.add(sign);
+  /* 拱心大钟（钢圈 + 盘面 + 时/分针 + 中轴，嵌浅弧采光带中央） */
+  bag.torus('steel', 0.07, 0.008, 0, 0.79, 0.132, 24, PI * 2, 0);
+  var faceM = clockFaceMesh(0.066); faceM.position.set(0, 0.79, 0.13); g.add(faceM);
+  var minH = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.052, 0.004).translate(0, 0.022, 0), mats().dark);
+  minH.position.set(0, 0.79, 0.134); g.add(minH);
+  var hrH = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.038, 0.004).translate(0, 0.015, 0), mats().dark);
+  hrH.position.set(0, 0.79, 0.133); g.add(hrH);
+  bag.cyl('steel', 0.007, 0.007, 0.008, 0, 0.79, 0.136, PI / 2, 0, 0, 10);
 
-  /* ========== 6.4 两翼配楼（竖条窗 + 平顶女儿墙 + 屋顶设备）+ 玻璃连廊 ========== */
-  /* 西翼 */
-  bag.box('conc', 0.6, 0.46, 0.82, -0.82, 0.28, -0.11, 0, 0, 0, SC.conc);
-  bag.box('winWall', 0.58, 0.38, 0.012, -0.82, 0.27, 0.306, 0, 0, 0, SC.win);
-  bag.box('winWall', 0.012, 0.38, 0.8, -1.126, 0.27, -0.11, 0, 0, 0, SC.win);
-  bag.box('white', 0.56, 0.02, 0.78, -0.82, 0.5, -0.11);
-  bag.box('conc', 0.6, 0.03, 0.02, -0.82, 0.525, 0.3);                                  /* 女儿墙 ×4 */
-  bag.box('conc', 0.6, 0.03, 0.02, -0.82, 0.525, -0.52);
-  bag.box('conc', 0.02, 0.03, 0.86, -1.12, 0.525, -0.11);
-  bag.box('conc', 0.02, 0.03, 0.86, -0.52, 0.525, -0.11);
-  acUnit(bag, -0.95, 0.545, -0.28);
-  bag.box('dark', 0.1, 0.2, 0.014, -0.82, 0.15, 0.307);                                 /* 翼楼入口 */
-  bag.box('white', 0.2, 0.008, 0.08, -0.82, 0.26, 0.33);
-  /* 东翼（稍高） */
-  bag.box('conc', 0.6, 0.51, 0.88, 0.82, 0.305, -0.11, 0, 0, 0, SC.conc);
-  bag.box('winWall', 0.58, 0.42, 0.012, 0.82, 0.29, 0.346, 0, 0, 0, SC.win);
-  bag.box('winWall', 0.012, 0.42, 0.86, 1.126, 0.29, -0.11, 0, 0, 0, SC.win);
-  bag.box('white', 0.56, 0.02, 0.84, 0.82, 0.55, -0.11);
-  bag.box('conc', 0.6, 0.03, 0.02, 0.82, 0.575, 0.33);
-  bag.box('conc', 0.6, 0.03, 0.02, 0.82, 0.575, -0.55);
-  bag.box('conc', 0.02, 0.03, 0.9, 1.12, 0.575, -0.11);
-  bag.box('conc', 0.02, 0.03, 0.9, 0.52, 0.575, -0.11);
-  acUnit(bag, 0.68, 0.595, -0.2);
-  acUnit(bag, 0.72, 0.595, -0.5);
-  bag.box('conc', 0.16, 0.1, 0.12, 0.95, 0.6, -0.35);                                   /* 楼梯间 + 避雷针 */
-  bag.box('dark', 0.08, 0.06, 0.012, 0.95, 0.585, -0.286);
-  bag.cyl('steel', 0.004, 0.004, 0.14, 0.95, 0.72, -0.35, 0, 0, 0, 6);
-  bag.box('dark', 0.1, 0.2, 0.014, 0.82, 0.15, 0.347);
-  bag.box('white', 0.2, 0.008, 0.08, 0.82, 0.26, 0.37);
-  /* 玻璃连廊 ×2（接主厅与两翼） */
-  for (sx = -1; sx <= 1; sx += 2) {
-    bag.box('glass', 0.2, 0.28, 0.34, sx * 0.62, 0.31, -0.05, 0, 0, 0, SC.glass);
-    bag.box('steel', 0.014, 0.3, 0.014, sx * 0.53, 0.31, 0.115);
-    bag.box('steel', 0.014, 0.3, 0.014, sx * 0.53, 0.31, -0.215);
-    bag.box('white', 0.22, 0.012, 0.36, sx * 0.62, 0.456, -0.05);
-  }
+  /* ========== 6.4 两翼配楼（退后于主厅立面、低于檐口：竖条窗 + 平顶女儿墙 + 屋顶设备） ========== */
+  /* 西翼 z -0.71..0.11 */
+  bag.box('conc', 0.62, 0.40, 0.82, -0.98, 0.25, -0.3, 0, 0, 0, SC.conc);
+  bag.box('winWall', 0.6, 0.32, 0.012, -0.98, 0.24, 0.116, 0, 0, 0, SC.win);
+  bag.box('winWall', 0.012, 0.32, 0.8, -1.286, 0.24, -0.3, 0, 0, 0, SC.win);
+  bag.box('white', 0.58, 0.02, 0.78, -0.98, 0.46, -0.3);
+  bag.box('conc', 0.62, 0.03, 0.02, -0.98, 0.485, 0.1);                                 /* 女儿墙 ×4 */
+  bag.box('conc', 0.62, 0.03, 0.02, -0.98, 0.485, -0.7);
+  bag.box('conc', 0.02, 0.03, 0.82, -1.27, 0.485, -0.3);
+  bag.box('conc', 0.02, 0.03, 0.82, -0.69, 0.485, -0.3);
+  acUnit(bag, -1.12, 0.5, -0.45);
+  bag.box('dark', 0.4, 0.004, 0.05, -0.98, 0.474, -0.15);                               /* 配楼屋顶天窗带 ×2 */
+  bag.box('glass', 0.4, 0.006, 0.045, -0.98, 0.479, -0.15, 0, 0, 0, SC.glass);
+  bag.box('dark', 0.4, 0.004, 0.05, -0.98, 0.474, -0.6);
+  bag.box('glass', 0.4, 0.006, 0.045, -0.98, 0.479, -0.6, 0, 0, 0, SC.glass);
+  bag.box('dark', 0.1, 0.18, 0.014, -0.98, 0.14, 0.117);                                /* 翼楼入口 */
+  bag.box('white', 0.2, 0.008, 0.08, -0.98, 0.24, 0.14);
+  /* 东翼（稍高）z -0.76..0.12（前脸退于台基之后，避免共面） */
+  bag.box('conc', 0.62, 0.44, 0.88, 0.98, 0.27, -0.32, 0, 0, 0, SC.conc);
+  bag.box('winWall', 0.6, 0.36, 0.012, 0.98, 0.26, 0.126, 0, 0, 0, SC.win);
+  bag.box('winWall', 0.012, 0.36, 0.86, 1.286, 0.26, -0.32, 0, 0, 0, SC.win);
+  bag.box('white', 0.58, 0.02, 0.84, 0.98, 0.5, -0.32);
+  bag.box('conc', 0.62, 0.03, 0.02, 0.98, 0.525, 0.11);
+  bag.box('conc', 0.62, 0.03, 0.02, 0.98, 0.525, -0.75);
+  bag.box('conc', 0.02, 0.03, 0.88, 1.27, 0.525, -0.32);
+  bag.box('conc', 0.02, 0.03, 0.88, 0.69, 0.525, -0.32);
+  acUnit(bag, 0.84, 0.545, -0.4);
+  acUnit(bag, 0.88, 0.545, -0.65);
+  bag.box('dark', 0.4, 0.004, 0.05, 0.98, 0.514, -0.1);                                 /* 配楼屋顶天窗带 ×2 */
+  bag.box('glass', 0.4, 0.006, 0.045, 0.98, 0.519, -0.1, 0, 0, 0, SC.glass);
+  bag.box('dark', 0.4, 0.004, 0.05, 0.98, 0.514, -0.28);
+  bag.box('glass', 0.4, 0.006, 0.045, 0.98, 0.519, -0.28, 0, 0, 0, SC.glass);
+  bag.box('conc', 0.16, 0.1, 0.12, 1.1, 0.55, -0.5);                                    /* 楼梯间 + 避雷针 */
+  bag.box('dark', 0.08, 0.06, 0.012, 1.1, 0.535, -0.436);
+  bag.cyl('steel', 0.004, 0.004, 0.14, 1.1, 0.67, -0.5, 0, 0, 0, 6);
+  bag.box('dark', 0.1, 0.18, 0.014, 0.98, 0.14, 0.127);
+  bag.box('white', 0.2, 0.008, 0.08, 0.98, 0.24, 0.15);
 
-  /* ========== 6.5 站后站台区：雨棚 ×4 + 轨道 ×3 + 门架 ×3 + 动车组 ========== */
-  var canopyZ = [-0.845, -0.995, -1.145, -1.29], trackZ = [-0.92, -1.07, -1.22];
+  /* ========== 6.5 站后站台区：大板雨棚 ×4 + 轨道 ×3 + 门架 ×3 + 接触网线 + 动车组 ×2 ========== */
+  var canopyZ = [-0.845, -0.995, -1.145, -1.285], trackZ = [-0.92, -1.07, -1.22];
   for (i = 0; i < 4; i++) {
-    var cz = canopyZ[i];
-    bag.box('white', 2.56, 0.03, 0.056, 0, 0.065, cz);                                  /* 站台条板 */
-    bag.box('white', 2.62, 0.016, 0.036, 0, 0.419, cz);                                 /* 连续折板雨棚 */
-    bag.box('white', 2.62, 0.014, 0.03, 0, 0.416, cz - 0.029, -0.7, 0, 0);
-    bag.box('white', 2.62, 0.014, 0.03, 0, 0.416, cz + 0.029, 0.7, 0, 0);
-    bag.box('white', 2.62, 0.022, 0.008, 0, 0.412, cz + 0.05);                          /* 檐口封板（前） */
-    bag.box('white', 2.62, 0.022, 0.008, 0, 0.412, cz - 0.05);                          /* 檐口封板（后） */
-    for (k = 0; k < 4; k++) bag.cyl('steel', 0.012, 0.012, 0.35, -0.9 + k * 0.6, 0.225, cz, 0, 0, 0, 8);
+    var cz = canopyZ[i], cd = (i === 3 ? 0.1 : 0.13);                                  /* 末排收窄，占地 ≤2.7 */
+    bag.box('white', 2.56, 0.03, 0.09, 0, 0.065, cz);                                   /* 站台条板（加宽） */
+    bag.box('white', 2.62, 0.016, cd, 0, 0.419, cz);                                    /* 连续大板雨棚（出挑盖轨） */
+    bag.box('white', 2.62, 0.022, 0.01, 0, 0.412, cz + cd / 2);                         /* 檐口封板（前） */
+    bag.box('white', 2.62, 0.022, 0.01, 0, 0.412, cz - cd / 2);                         /* 檐口封板（后） */
+    bag.box('dark', 2.44, 0.003, 0.026, 0, 0.4275, cz);                                 /* 棚顶天窗带（深衬底 + 玻璃） */
+    bag.box('glass', 2.44, 0.008, 0.022, 0, 0.432, cz, 0, 0, 0, SC.glass);
+    for (k = 0; k < 5; k++) bag.cyl('steel', 0.011, 0.011, 0.36, -1.0 + k * 0.5, 0.235, cz, 0, 0, 0, 8);
+    bag.cyl('steel', 0.003, 0.003, 0.1, 0.25, 0.13, cz, 0, 0, 0, 6);                    /* 站台站牌 */
+    bag.box('white', 0.05, 0.022, 0.004, 0.25, 0.19, cz);
   }
-  for (i = 0; i < 3; i++) {                                                             /* 轨道 ×3（道砟 + 双轨） */
+  for (i = 0; i < 3; i++) {                                                             /* 轨道 ×3（道砟 + 双轨 + 接触网双线） */
     var tz = trackZ[i];
     bag.box('ballast', 2.6, 0.008, 0.07, 0, 0.054, tz, 0, 0, 0, SC.ballast);
     bag.box('rail', 2.56, 0.006, 0.008, 0, 0.062, tz - 0.018, 0, 0, 0, 6);
     bag.box('rail', 2.56, 0.006, 0.008, 0, 0.062, tz + 0.018, 0, 0, 0, 6);
+    bag.box('dark', 2.56, 0.003, 0.003, 0, 0.55, tz);
+    bag.box('dark', 2.56, 0.003, 0.003, 0, 0.505, tz);
   }
   var gx = [-0.85, 0, 0.85];
   for (i = 0; i < 3; i++) {                                                             /* 接触网门架 ×3（矮） */
@@ -630,7 +685,7 @@ window.Special3DModern[5] = function () {
     bag.box('dark', 0.012, 0.02, 0.012, gx[i], 0.59, -0.98);
     bag.box('dark', 0.012, 0.02, 0.012, gx[i], 0.59, -1.16);
   }
-  /* 动车组（白车身 + 深色长窗带 + 金腰线 + 裙边 + 圆润车头 + 车顶暗线 + 受电弓） */
+  /* 动车组 A（中轨：白车身 + 深色长窗带 + 金腰线 + 裙边 + 圆润车头 + 车顶暗线 + 受电弓） */
   bag.box('white', 2.2, 0.115, 0.072, -0.05, 0.118, -1.07, 0, 0, 0, SC.conc);
   bag.box('dark', 2.2, 0.032, 0.074, -0.05, 0.152, -1.07);
   bag.box('yellow', 2.2, 0.008, 0.073, -0.05, 0.128, -1.07);
@@ -641,21 +696,28 @@ window.Special3DModern[5] = function () {
   bag.box('steel', 0.05, 0.006, 0.006, -0.4, 0.198, -1.07);
   bag.box('steel', 0.006, 0.05, 0.006, -0.42, 0.172, -1.07, 0, 0, 0.5);
   bag.box('steel', 0.006, 0.05, 0.006, -0.38, 0.172, -1.07, 0, 0, -0.5);
+  /* 动车组 B（近轨短编组，参考右侧站台有第二列车停靠） */
+  bag.box('white', 1.5, 0.11, 0.07, 0.35, 0.118, -0.92, 0, 0, 0, SC.conc);
+  bag.box('dark', 1.5, 0.03, 0.072, 0.35, 0.15, -0.92);
+  bag.box('blue', 1.5, 0.007, 0.071, 0.35, 0.126, -0.92);
+  bag.box('dark', 1.5, 0.028, 0.06, 0.35, 0.074, -0.92);
+  bag.cyl('white', 0.035, 0.035, 0.07, 1.1, 0.118, -0.92, 0, 0, PI / 2, 12);
+  bag.box('dark', 0.02, 0.048, 0.048, 1.03, 0.158, -0.92);
 
   /* ========== 6.6 合并落地 ========== */
   bag.build(g);
 
   /* ========== 6.7 发光件（每实例新建）+ 动画 ≤2 项 ========== */
   var glowMat = new THREE.MeshStandardMaterial({
-    color: C('#ffffff'), map: texHall(), emissive: C('#ffbe72'), emissiveMap: texHall(),
-    emissiveIntensity: 0.5, roughness: 0.6
+    color: C('#ffffff'), map: texHall(), emissive: C('#ffd6a0'), emissiveMap: texHall(),
+    emissiveIntensity: 0.4, roughness: 0.6
   });
-  var hallGlow = new THREE.Mesh(new THREE.PlaneGeometry(1.08, 0.5), glowMat);
+  var hallGlow = new THREE.Mesh(new THREE.PlaneGeometry(1.26, 0.5), glowMat);
   hallGlow.position.set(0, 0.42, 0.095); g.add(hallGlow);                               /* 候车厅内景（弧形幕墙之后） */
   (function () {                                                                        /* 站台雨棚灯带 ×4（并 1 mesh） */
     var pos = [], nor = [], uv = [];
     for (var n = 0; n < 4; n++) {
-      var gg = new THREE.BoxGeometry(2.44, 0.01, 0.024).translate(0, 0.404, canopyZ[n]).toNonIndexed();
+      var gg = new THREE.BoxGeometry(2.44, 0.01, 0.03).translate(0, 0.404, canopyZ[n]).toNonIndexed();
       var p = gg.attributes.position.array, nr = gg.attributes.normal.array, u = gg.attributes.uv.array;
       for (var j2 = 0; j2 < p.length; j2++) pos.push(p[j2]);
       for (j2 = 0; j2 < nr.length; j2++) nor.push(nr[j2]);
@@ -674,7 +736,7 @@ window.Special3DModern[5] = function () {
       hrH.rotation.z = -t * (PI / 360);
     },
     function (t) {                                                                      /* 2) 暖光呼吸（幅度 ≤0.25） */
-      glowMat.emissiveIntensity = 0.5 + 0.18 * Math.sin(t * 1.6 + 0.7);
+      glowMat.emissiveIntensity = 0.4 + 0.15 * Math.sin(t * 1.6 + 0.7);
     }
   ];
   g.userData.specialId = 5;
