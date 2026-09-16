@@ -514,6 +514,7 @@ const main = (() => {
     $('#start-screen').classList.add('hidden');
     $('#game-screen').classList.remove('hidden');
     chatVisible(true);
+    window.__boardTheme = (m.cfg && m.cfg.theme === 'modern') ? 'modern' : 'classic';   /* 客人场景跟房主主题 */
     ui.initGameScene();
     if (window.showBoardBoot) window.showBoardBoot();
     SFX.unlock(); BGM.setMode('game');
@@ -557,6 +558,7 @@ const main = (() => {
     $('#game-screen').classList.remove('hidden');
     chatVisible(true);
     ui.applySpeed(ui.loadSpeed(), { persist: false });
+    window.__boardTheme = boardTheme;   /* 棋盘风格随房主：本地场景 + 广播给客人（此前联机开局漏设，永远经典） */
     newGame(chars, selectedChar, {
       startMoney: lastConfig.startMoney,
       maxRounds: lastConfig.maxRounds,
@@ -564,7 +566,7 @@ const main = (() => {
     });
     NET.installMirror();
     NET.sendSync();
-    NET.broadcast({ t: 'start', cfg: { maxRounds: lastConfig.maxRounds }, snap: NET.snapshot() });
+    NET.broadcast({ t: 'start', cfg: { maxRounds: lastConfig.maxRounds, theme: boardTheme }, snap: NET.snapshot() });
     NET.broadcast({ t: 'chat', from: '系统', seat: -1, text: '对局开始！祝各位发财！' });
     window.__seatCheck = p => !NET.isRemoteSeat(p.idx);
     BGM.setMode('game');
