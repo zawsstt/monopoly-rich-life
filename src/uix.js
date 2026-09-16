@@ -529,6 +529,7 @@ const ui = (() => {
       if (!p.alive) badges.push('<span class="bd bd-dead">💀 破产</span>');
       else {
         if (p.inJail) badges.push('<span class="bd bd-jail" title="羁押中：无法行动，交保释金 / 用出狱许可证 / 蹲满回合可出狱">⛓ 羁押中</span>');
+        if (p.detained) badges.push('<span class="bd bd-jail" title="行政拘留中：下回合暂停行动，不可保释">🚔 拘留中</span>');
         if (p.custody) badges.push('<span class="bd bd-jail bd-psa" title="净化心灵管控中：回合自动跳过，视频/倒计时结束后归队">🧘 净化中</span>');
         if (p.honorTag) badges.push(`<span class="bd bd-dishonor" title="诚信档案：上局逃避净化视频，本局初始资金 −20%">🚫 ${p.honorTag}</span>`);
         if (p.shield) badges.push('<span class="bd bd-glow" title="护身符生效：下一次应付租金免付">🧿</span>');
@@ -588,7 +589,7 @@ const ui = (() => {
     const q = G.players[t];
     if (!q || !q.alive || q === p || q.idx === p.idx) return false;
     if (key === 'thief') return Object.keys(q.props || {}).some(k => k !== 'thief' && (q.props[k] | 0) > 0);   /* 只偷得到非窃贼卡的库存 */
-    if (key === 'frame') return !q.inJail;   /* 已在押者不可再押 */
+    if (key === 'frame') return !q.inJail && !q.detained && !q.custody;   /* 已在押 / 拘留 / 净化中者不可再押 */
     return false;
   }
   function propNeedsPlayer(key) { return key === 'thief' || key === 'frame'; }
@@ -695,14 +696,16 @@ const ui = (() => {
     const spinY = 360 * (3 + rnd(2));
     diceRot.x = Math.ceil(diceRot.x / 360) * 360 + spinX + fx;
     diceRot.y = Math.ceil(diceRot.y / 360) * 360 + spinY + fy;
-    const cssMs = Math.max(120, 1050 / Math.max(0.1, G.speed || 1));
+    /* 过渡时长随速度缩放但保底 420ms（3× 档 350ms 的整圈旋转肉眼只剩残影）；等待时长对齐真实过渡，
+     * 结果停留保底 320ms——这里不能用 game.js 的 sleep()（它再除一次速度） */
+    const spdV = Math.max(0.1, G.speed || 1);
+    const cssMs = Math.max(420, 1050 / spdV);
     d.style.transition = `transform ${cssMs}ms cubic-bezier(.22,.68,.16,1)`;
     d.style.transform = DICE_TILT + `rotateX(${diceRot.x}deg) rotateY(${diceRot.y}deg)`;
-    await sleep(1080);
+    await new Promise(r => setTimeout(r, cssMs + 80));
     wrap.classList.remove('rolling');
-    // 结果停留 ≥0.9s/spd：骰子定格在点数面上，让玩家看清后再让角色移动
-    // （v3d 模式下桥接取两边 Promise 最长者，停留节奏一致）
-    await sleep(900);
+    // 结果停留：骰子定格在点数面上，让玩家看清后再让角色移动（v3d 模式下桥接取两边 Promise 最长者）
+    await new Promise(r => setTimeout(r, Math.max(320, 900 / spdV)));
   }
 
   function waitRoll() {
@@ -777,58 +780,57 @@ const ui = (() => {
   /* ================= 全局播报条（HUD 下方；队列轮播，超长文案自动横向滚动） =================
    * game.js 的 pickSeason / 里程碑 / 拍卖 / 破产等全局事件经 ui.news() 进入队列，逐条淡入停留淡出；
    * 队列排空后最后一条常驻（本期事件因此整回合可见）。toast 保持原样不受影响。 */
-  const NT = { q: [], busy: false, timer: null, seq: 0 };
+  const NT = { q: [], busy: false, timer: null, seq: 0, cur: null, looping: false };
   const NT_MAX_Q = 6;
+  const NT_SPEED = 95;        // 弹幕速度 px/s（视窗宽 + 消息宽 决定单条时长）
+  const NT_MIN_MS = 4200;     // 单条最短滚动时长
   function ntRoot() { return document.getElementById('news-ticker'); }
   function ntRenderQueue() {
     const q = document.getElementById('nt-q');
     if (!q) return;
     q.innerHTML = NT.q.map(() => '<i class="on"></i>').join('');
   }
-  function ntShow(text) {
+  /* 弹幕式：消息从视窗右缘外滑入、匀速滑到左缘外；loop=true 为队列排空后的常驻循环（不闪灯） */
+  function ntShow(text, loop) {
     const bar = ntRoot();
     if (!bar) return;
     const view = bar.querySelector('.nt-view');
-    const old = bar.querySelector('.nt-msg');
     const mySeq = ++NT.seq;
-    const swap = () => {
-      if (mySeq !== NT.seq) return;
-      const n = document.createElement('span');
-      n.className = 'nt-msg'; n.id = 'nt-msg';
-      n.innerHTML = text;
-      if (old && old.parentNode) old.replaceWith(n); else if (view) view.appendChild(n);
-      bar.classList.remove('idle');
-      bar.classList.add('flash');
-      setTimeout(() => bar.classList.remove('flash'), 650);
-      /* 超出可视宽度：横向匀速滚动到尾部再停留 */
-      let hold = 4200;
-      try {
-        const over = n.scrollWidth - (view ? view.clientWidth : 0);
-        if (view && over > 8) {
-          const dur = Math.max(2800, over * 26);
-          n.style.setProperty('--nt-dx', (-over - 10) + 'px');
-          n.style.setProperty('--nt-dur', dur + 'ms');
-          n.classList.add('scroll');
-          hold = dur + 2400;
-        }
-      } catch (e) { /* 无布局环境 */ }
-      clearTimeout(NT.timer);
-      NT.timer = setTimeout(ntNext, hold);
-    };
-    if (old && !bar.classList.contains('idle')) {
-      old.classList.add('out');
-      setTimeout(swap, 240);
-    } else swap();
+    const n = document.createElement('span');
+    n.className = 'nt-msg'; n.id = 'nt-msg';
+    n.innerHTML = text;
+    if (view) { view.innerHTML = ''; view.appendChild(n); }
+    bar.classList.remove('idle');
+    if (!loop) { bar.classList.add('flash'); setTimeout(() => bar.classList.remove('flash'), 650); }
+    let dur = NT_MIN_MS;
+    try {
+      const vw = view ? view.clientWidth : 0, mw = n.scrollWidth || n.offsetWidth || 0;
+      if (vw > 0 && mw > 0) {
+        dur = Math.max(NT_MIN_MS, Math.round((vw + mw) / NT_SPEED * 1000));
+        n.style.setProperty('--nt-from', vw + 'px');
+        n.style.setProperty('--nt-to', (-mw - 6) + 'px');
+      }
+    } catch (e) { /* 无布局环境 */ }
+    n.style.setProperty('--nt-dur', dur + 'ms');
+    try { void n.offsetWidth; } catch (e) { /* 强制 reflow：起点先落在右缘外再启动动画 */ }
+    n.classList.add('run');
+    NT.cur = text; NT.looping = !!loop; NT.busy = true;
+    clearTimeout(NT.timer);
+    NT.timer = setTimeout(() => { if (mySeq === NT.seq) ntNext(); }, dur + 120);
   }
   function ntNext() {
-    if (!NT.q.length) { NT.busy = false; ntRenderQueue(); return; }
-    NT.busy = true;
-    const text = NT.q.shift();
-    ntRenderQueue();
-    ntShow(text);
+    if (NT.q.length) {
+      const text = NT.q.shift();
+      ntRenderQueue();
+      ntShow(text, false);
+      return;
+    }
+    /* 队列排空：最后一条循环滚动常驻（本期事件整回合可见），有新消息立即让位 */
+    if (NT.cur) { ntShow(NT.cur, true); return; }
+    NT.busy = false; ntRenderQueue();
   }
   function ntReset() {
-    NT.q.length = 0; NT.busy = false; NT.seq++;
+    NT.q.length = 0; NT.busy = false; NT.looping = false; NT.cur = null; NT.seq++;
     clearTimeout(NT.timer); NT.timer = null;
     const bar = ntRoot();
     if (!bar) return;
@@ -842,7 +844,7 @@ const ui = (() => {
     NT.q.push(String(text == null ? '' : text));
     while (NT.q.length > NT_MAX_Q) NT.q.shift();
     ntRenderQueue();
-    if (!NT.busy) ntNext();
+    if (!NT.busy || NT.looping) ntNext();   // 空闲或正在常驻循环 → 立即播新消息
   }
 
   function splash(html) {
@@ -856,6 +858,7 @@ const ui = (() => {
   const LOG_ICON = { turn: '🎯', dice: '🎲', buy: '🏷️', build: '🏗️', bad: '💔', good: '✨', info: '・', pay: '💸' };
   function log(html, kind = 'info') {
     const feed = $('#log-feed');
+    if (!feed) return;   // 对局界面未挂载（菜单期 / 冒烟桩）时静默
     const d = document.createElement('div');
     d.className = 'logline lk-' + kind;
     d.innerHTML = `<span class="li">${LOG_ICON[kind] || '・'}</span><span>${html}</span>`;
@@ -1292,6 +1295,9 @@ const ui = (() => {
 .ah-head small{color:#9fc4a8;font-size:13px;letter-spacing:1px}
 .ah-step{margin-left:auto;font-size:12px;color:#9fb59c;background:rgba(0,0,0,.3);padding:5px 12px;border-radius:999px;box-shadow:inset 0 0 0 1px rgba(255,215,106,.22)}
 .ah-step b{color:#ffd76a;font-size:13px}
+.ah-close{flex:0 0 auto;width:36px;height:36px;margin-left:2px;border:none;border-radius:10px;cursor:pointer;font:800 15px/1 "Microsoft YaHei",sans-serif;color:#e6dfc6;background:rgba(255,255,255,.07);box-shadow:inset 0 0 0 1px rgba(255,215,106,.28);transition:background .15s,color .15s}
+.ah-close:hover{color:var(--gold-hi);background:rgba(255,255,255,.14)}
+.ah-close:active{transform:translateY(1px)}
 .ah-stage{position:relative;display:flex;align-items:stretch;gap:14px}
 .ah-screen{flex:1;border-radius:14px;padding:16px 22px 14px;position:relative;overflow:hidden;
   background:
@@ -1376,6 +1382,45 @@ const ui = (() => {
 .ah-closing{animation:ahOut .5s ease forwards}
 @keyframes ahOut{to{opacity:0;transform:scale(.97)}}
 @media (max-width:760px){.ah-floor{flex-direction:column}.ah-side{min-width:0}.ahs-name{font-size:22px}.ahs-price b{font-size:26px}}
+/* 矮舞台（手机横屏 / 强制横屏舞台，main.js 置 html.stage-short）：整体按 ~0.7 等比收缩，标的屏 / 席位 / 战报 / 操作四段必须在 360px 高内放下；
+ * 装饰件（主持人立绘、底价说明、战报标题）让位，功能件（当前价、席位状态、举牌 / 退出按钮）保空间 */
+html.stage-short .ah-wrap{padding:8px 12px;gap:6px}
+html.stage-short .ah-head{padding-bottom:5px;gap:8px}
+html.stage-short .ah-head b{font-size:15px;letter-spacing:2px}
+html.stage-short .ah-head small{font-size:11px}
+html.stage-short .ah-step{font-size:11px;padding:3px 9px}
+html.stage-short .ah-close{width:32px;height:32px}
+html.stage-short .ah-stage{gap:8px}
+html.stage-short .ah-screen{padding:8px 12px 6px}
+html.stage-short .ahs-tag{font-size:9.5px;padding:3px 8px;margin-bottom:4px}
+html.stage-short .ahs-lot{gap:10px}
+html.stage-short .ahs-name{font-size:17px}
+html.stage-short .ahs-owner{font-size:11px;margin-top:1px}
+html.stage-short .ahs-price{padding:4px 12px 3px;border-radius:10px}
+html.stage-short .ahs-price b{font-size:20px}
+html.stage-short .ahs-price small{font-size:9.5px}
+html.stage-short .ahs-leader{font-size:12px;min-width:0}
+html.stage-short .ahs-meta{display:none}
+html.stage-short .ah-host{width:64px;padding:4px 0;gap:2px}
+html.stage-short .ah-host-fig{font-size:24px}
+html.stage-short .ah-host-name{display:none}
+html.stage-short .ah-hammer{font-size:22px}
+html.stage-short .ah-floor{flex-direction:row;gap:8px;min-height:0}
+html.stage-short .ah-seats{grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:6px}
+html.stage-short .ah-seat{flex-direction:row;flex-wrap:wrap;justify-content:flex-start;gap:3px 8px;padding:6px 8px}
+html.stage-short .ah-seat img{width:32px;height:32px;border-radius:9px}
+html.stage-short .ah-seat .n{font-size:12px}
+html.stage-short .ah-seat .m{font-size:11px}
+html.stage-short .ah-seat .st{font-size:10.5px;min-height:0;width:100%}
+html.stage-short .ah-seat .paddle{font-size:16px;position:absolute;right:6px;top:6px;transform:rotate(-30deg)}
+html.stage-short .ah-seat.lead::before,html.stage-short .ah-seat.won::before{top:auto;bottom:6px;left:auto;right:6px}
+html.stage-short .ah-side{gap:6px;min-width:220px}
+html.stage-short .ah-feed{max-height:70px;font-size:11.5px;line-height:1.6;padding:4px 10px 6px}
+html.stage-short .ah-feed::before{display:none}
+html.stage-short .ah-actions{gap:5px}
+html.stage-short .ah-turn{font-size:12.5px;min-height:16px}
+html.stage-short .ah-btn{padding:8px 12px;font-size:14px;min-height:38px}
+html.stage-short #ah-rps{font-size:12px}
 `;
     document.head.appendChild(st);
   }
@@ -1403,7 +1448,8 @@ const ui = (() => {
     el.innerHTML = `
       <div class="ah-wrap">
         <div class="ah-head"><b>🔨 富贵拍卖行</b><small>${t.name} · 竞价进行中</small>
-          <span class="ah-step">加价阶梯 <b>${fmt(minStep)}</b></span></div>
+          <span class="ah-step">加价阶梯 <b>${fmt(minStep)}</b></span>
+          <button class="ah-close" id="ah-close" type="button" title="不参与竞拍，关闭拍卖厅回到对局" aria-label="关闭拍卖厅">✕</button></div>
         <div class="ah-stage">
           <div class="ah-screen">
             <span class="ahs-tag">LOT ${String(idx).padStart(2, '0')} · 拍卖标的</span>
@@ -1431,6 +1477,11 @@ const ui = (() => {
       </div>`;
     document.body.appendChild(el);
     AH.el = el;
+    AH.dismissed = false;
+    /* 关闭拍卖厅 = 本机玩家放弃竞拍回到对局：挂起的询问按「旁观 / 放下牌子」安全 resolve，
+     * 拍卖在后台由其余参与者继续（战报 / 快报照常），本场后续再问本机一律视为放弃 */
+    const closeBtn = $('#ah-close', el);
+    if (closeBtn) closeBtn.onclick = () => { if (typeof SFX !== 'undefined' && SFX.click) SFX.click(); auctionDismiss(); };
     AH.feed = $('#ah-feed', el);
     AH.screen = { price: $('#ahs-price', el), leader: $('#ahs-leader', el), stage: $('.ah-stage', el) };
     AH.seats.clear();
@@ -1564,6 +1615,7 @@ const ui = (() => {
   /* 大厅入口询问：是否参与竞拍（game.js 开厅后第一时间调用） */
   function auctionJoinAsk({ idx, bankPrice, who }) {
     return new Promise(res => {
+      if (AH.dismissed) { res('watch'); return; }   // 玩家已关闭拍卖厅：视为旁观
       if (!AH.el) { res('join'); return; }
       /* 厅被关闭（连拍开新厅 / 重开游戏）时安全 resolve，不让 game.js 悬空 */
       const finish = v => { if (AH.askAbort === abort) AH.askAbort = null; res(v); };
@@ -1624,6 +1676,14 @@ const ui = (() => {
     });
   }
 
+  /* 玩家主动关闭拍卖厅（✕）：放弃本场竞拍、立即收厅回到对局；拍卖逻辑在后台继续 */
+  function auctionDismiss() {
+    if (!AH.el) return;
+    AH.dismissed = true;
+    log('🚪 你关闭了拍卖厅，本场不再参与竞拍', 'info');
+    auctionClose(true);
+  }
+
   function auctionClose(silent) {
     /* 先清延时关厅定时器 + 安全 resolve 悬空询问（不依赖 AH.el 是否还在） */
     if (AH.closeT) { clearTimeout(AH.closeT); AH.closeT = null; }
@@ -1670,6 +1730,8 @@ const ui = (() => {
   }
 
   function auctionPrompt(p, { idx, price, step, leader, need }) {
+    /* 玩家已关闭拍卖厅 → 本场不再打扰，直接放弃 */
+    if (AH.dismissed) return Promise.resolve('quit');
     /* 拍卖大厅开着 → 大厅内举牌；否则退回传统弹窗（联机客人侧） */
     if (AH.el) return auctionHallAsk(p, { need, leader, price });
     return new Promise(res => {
