@@ -1360,15 +1360,31 @@ const V3D = (() => {
     32: 'gate',       // 拘留所
     37: 'airport',    // 国际机场
   };
+  let specialsTheme = null;   // 已建特建所属主题：同一页面切换主题重开时整组拆掉重建
   function buildSpecials() {
+    const theme = (window.__boardTheme === 'modern') ? 'modern' : 'classic';
+    if (specialsTheme && specialsTheme !== theme) {
+      Object.keys(specials).forEach(k => {
+        const g = specials[k];
+        if (g) { try { staticRoot.remove(g); disposeGroup(g); } catch (e) { /* ignore */ } }
+        delete specials[k];
+      });
+      fountainTile = -1;
+    }
+    specialsTheme = theme;
     BOARD.forEach((t, i) => {
       const fk = SPECIAL_FACTORY[i];
       if (specials[i] || !fk) return;
       const B = window.Building3D;
       try {
-        /* img2threejs 精细特建优先（Special3D[格号]），回退 buildings3d 工厂 */
         let g = null;
-        if (window.Special3D && typeof window.Special3D[i] === 'function') {
+        /* 现代主题：Special3DModern[格号] 优先（中央车站 5 / 高铁虹桥站 15 / 轮渡码头 25 / 国际机场 37）；
+         * 电力 11 / 水厂 29 / 监狱 12 两套主题共用经典模型（用户指定不重做）。再回退 img2threejs 经典特建 → buildings3d 工厂 */
+        if (theme === 'modern' && window.Special3DModern && typeof window.Special3DModern[i] === 'function') {
+          try { g = window.Special3DModern[i](); } catch (e) { g = null; }
+          if (g) g.userData.fromModern = true;
+        }
+        if (!g && window.Special3D && typeof window.Special3D[i] === 'function') {
           try { g = window.Special3D[i](); } catch (e) { g = null; }
         }
         if (!g && B && typeof B[fk] === 'function') g = B[fk]();
@@ -1913,22 +1929,22 @@ const V3D = (() => {
    *           与角色站位同层），mount = 车顶 max.y·s（车顶坐人 ≈ 车高）
    *   plane ：机身长归一 4.6，腹部离地 TILE_TOP+3.2 巡航——lv4 楼顶最高 y≈4.16，翼展 4.33
    *           半幅 2.16 扫过的格子必须整个从楼顶上方飞过（穿模审计 P0：原 +0.55 会削过 6/6 格 lv4） */
-  const RIDE_TARGET_LEN = { police: 3.2, plane: 4.6 };
+  const RIDE_TARGET_LEN = { police: 3.2, plane: 4.6, taxi: 3.0 };
   const RIDE_GROUND_Y = ROAD_TOP_Y + 0.04;   /* 模块E：车轮从桌面层(0.04)抬到马路路面层 */
   const RIDE_FLY_BELLY = TILE_TOP + 3.2;
-  function fitRide(g, isPolice) {
-    const kind = isPolice ? 'police' : 'plane';
-    let s = isPolice ? 2.6 : 2.5;                       // Box3 不可用时的兜底（旧行为）
-    let baseY = isPolice ? 0.05 : 2.75, mountY = isPolice ? 0.95 : 0.92;
+  function fitRide(g, kind) {
+    const ground = kind !== 'plane';
+    let s = ground ? 2.6 : 2.5;                       // Box3 不可用时的兜底（旧行为）
+    let baseY = ground ? 0.05 : 2.75, mountY = ground ? 0.95 : 0.92;
     try {
       const box = new THREE.Box3().setFromObject(g);
       const size = box.getSize(new THREE.Vector3());
       const rawLen = Math.max(size.x, size.z);
       if (isFinite(rawLen) && rawLen > 1e-4) {
-        s = RIDE_TARGET_LEN[kind] / rawLen;
+        s = (RIDE_TARGET_LEN[kind] || 3.0) / rawLen;
         g.scale.setScalar(s);
         const minY = box.min.y * s, maxY = box.max.y * s;
-        if (isPolice) { baseY = RIDE_GROUND_Y - minY; mountY = maxY; }
+        if (ground) { baseY = RIDE_GROUND_Y - minY; mountY = maxY; }
         else { baseY = RIDE_FLY_BELLY - minY; mountY = (maxY - minY) * 0.6; }
       } else {
         g.scale.setScalar(s);
@@ -1936,14 +1952,34 @@ const V3D = (() => {
     } catch (e) { g.scale.setScalar(s); }
     return { scale: s, baseY, mountY };
   }
+  /* 出租车兜底模型（Special3D.taxi 缺席时）：黄色轿车 + 顶灯，几何极简 */
+  function basicTaxi() {
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.42, 2.9), new THREE.MeshStandardMaterial({ color: new THREE.Color(0xf7b500).convertSRGBToLinear(), roughness: 0.4, metalness: 0.25 }));
+    body.position.y = 0.42; g.add(body);
+    const cab = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.42, 1.5), new THREE.MeshStandardMaterial({ color: new THREE.Color(0xf7b500).convertSRGBToLinear(), roughness: 0.4, metalness: 0.25 }));
+    cab.position.set(0, 0.84, -0.1); g.add(cab);
+    const glass = new THREE.Mesh(new THREE.BoxGeometry(1.22, 0.3, 1.42), new THREE.MeshStandardMaterial({ color: new THREE.Color(0x18262e).convertSRGBToLinear(), roughness: 0.12, metalness: 0.6 }));
+    glass.position.set(0, 0.9, -0.1); g.add(glass);
+    const light = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.14, 0.24), new THREE.MeshStandardMaterial({ color: new THREE.Color(0xfff3c4).convertSRGBToLinear(), emissive: new THREE.Color(0xffd76a), emissiveIntensity: 0.5, roughness: 0.3 }));
+    light.position.set(0, 1.12, -0.1); g.add(light);
+    const wgeo = new THREE.CylinderGeometry(0.26, 0.26, 0.18, 12);
+    wgeo.rotateZ(Math.PI / 2);
+    const wmat = new THREE.MeshStandardMaterial({ color: new THREE.Color(0x14181c).convertSRGBToLinear(), roughness: 0.9 });
+    [[-0.72, 1.0], [0.72, 1.0], [-0.72, -1.0], [0.72, -1.0]].forEach(([x, z]) => {
+      const w = new THREE.Mesh(wgeo, wmat); w.position.set(x, 0.26, z); g.add(w);
+    });
+    return g;
+  }
   function rideStart(p, kind) {
     const rig = tokens.get(p.idx);
     if (!rig || rig.dead || rig.ride) return;
-    const isPolice = kind !== 'plane';
-    const key = isPolice ? 'police' : 'jet';
+    const k = (kind === 'plane' || kind === 'taxi') ? kind : 'police';
+    const isPolice = k === 'police';
+    const key = { police: 'police', plane: 'jet', taxi: 'taxi' }[k];   // 工厂注册键（专机工厂名为 jet）
     let g = null;
     const B = window.Building3D;
-    /* img2threejs 精细模型优先（Special3D.police / Special3D.jet——jet.js 未落地时 typeof 检查自然跳过），
+    /* img2threejs 精细模型优先（Special3D.police / Special3D.jet / Special3D.taxi——未落地时 typeof 检查自然跳过），
      * 再回退 Building3D.props → PropFactories → basic 兜底 */
     if (window.Special3D && typeof window.Special3D[key] === 'function') {
       try { g = window.Special3D[key](); } catch (e) { g = null; }
@@ -1956,17 +1992,17 @@ const V3D = (() => {
     if (!g && window.PropFactories && typeof window.PropFactories[key] === 'function') {
       try { g = window.PropFactories[key](); } catch (e) { g = null; }
     }
-    if (!g) g = isPolice ? basicPolice() : basicJet();
+    if (!g) g = k === 'plane' ? basicJet() : (k === 'taxi' ? basicTaxi() : basicPolice());
     /* 工厂模型可能自带 userData.anim（如 Building3D.jet 的浮动动画每帧写绝对 position.y，
      * 会和主循环骑乘同步块互相顶飞、把载具拽回地面穿模）——骑乘位姿由同步块全权驱动，必须摘除 */
     if (g.userData) g.userData.anim = null;
-    const fit = fitRide(g, isPolice);
+    const fit = fitRide(g, k);
     g.traverse(o => { if (o.isMesh) o.castShadow = true; });
     const baseY = fit.baseY, mountY = fit.mountY;
     g.position.set(rig.group.position.x, baseY, rig.group.position.z);
     g.rotation.y = rig.targetRotY;
     fxRoot.add(g);
-    rig.ride = { group: g, kind: isPolice ? 'police' : 'plane', mountY, baseY };
+    rig.ride = { group: g, kind: k, mountY, baseY };
     rides.set(p.idx, rig.ride);
     rig.panic = isPolice;             // 押送途中角色惊慌举手
     rig.group.position.y = baseY + mountY;
@@ -2015,6 +2051,12 @@ const V3D = (() => {
     if (!dice) return;
     diceRolling = true;
     const S = spd();
+    /* 物理段（摇/抛/弹/定格）最多压到 1.6×：3× 档下整段抛掷若只剩 0.35s，落地弹跳只有两三帧，
+     * 肉眼看是"骰子还在空中人就走了"。结果停留段随游戏速度压缩但保底 0.35s，保证看清点数再走棋 */
+    const SP = Math.min(S, 1.6);
+    /* 掷骰期间阴影图每两帧重绘一次（每帧重绘在高画质档会把帧率拉到 20 以下，抛掷段直接掉帧成瞬移） */
+    let shTick = 0;
+    const shadowTick = () => { if ((shTick++ & 1) === 0) shadowDirty(); };
     const q0 = dice.quaternion.clone();
     const n = new THREE.Vector3(FACE_NORMAL[value][0], FACE_NORMAL[value][1], FACE_NORMAL[value][2]).normalize();
     const align = new THREE.Quaternion().setFromUnitVectors(n, new THREE.Vector3(0, 1, 0));
@@ -2046,7 +2088,7 @@ const V3D = (() => {
 
     /* ① 抬手摇晃：小幅高频抖动（~9 周期，包络两端归零），结束精确回到 p0/q0 */
     const shX = (Math.random() - 0.5) * 0.5, shZ = (Math.random() - 0.5) * 0.42;
-    await tween(0.25 / S, k => {
+    await tween(0.25 / SP, k => {
       const w = k * Math.PI * 18;
       const env = Math.sin(k * Math.PI);
       dice.quaternion.copy(q0);
@@ -2056,57 +2098,57 @@ const V3D = (() => {
         p0.x + Math.sin(w) * 0.07 + shX * env,
         p0.y + Math.abs(Math.sin(w * 0.5)) * 0.12,
         p0.z + Math.cos(w * 1.3) * 0.05 + shZ * env);
-      shadowDirty();
+      shadowTick();
     });
     dice.position.copy(p0);
     dice.quaternion.copy(q0);
 
     /* ② 抛出高速翻滚：双轴合计 ≥2 圈，大抛物线飞向落点 */
     const spinFly = segSpin(Math.PI * 2 * 2.75, Math.PI * 2 * 1.9);
-    await tween(0.45 / S, k => {
+    await tween(0.45 / SP, k => {
       spinFly(k);
       dice.position.lerpVectors(p0, p1, k);
       dice.position.y += Math.sin(k * Math.PI) * 2.1;
-      shadowDirty();
+      shadowTick();
     });
 
     /* ③ 落地弹跳 1：高度 0.5，弱旋转延续 */
     sfxTick();
     const b1To = V(p1.x + (Math.random() - 0.5) * 0.5, p1.y, p1.z + (Math.random() - 0.5) * 0.4);
     const spinB1 = segSpin(Math.PI * 1.1, Math.PI * 0.6);
-    await tween(0.17 / S, k => {
+    await tween(0.17 / SP, k => {
       spinB1(k);
       dice.position.lerpVectors(p1, b1To, k);
       dice.position.y = p1.y + Math.sin(k * Math.PI) * 0.5;
-      shadowDirty();
+      shadowTick();
     });
 
     /* ④ 落地弹跳 2：高度 0.25 */
     sfxTick();
     const b2To = V(b1To.x + (b1To.x - p1.x) * 0.35, p1.y, b1To.z + (b1To.z - p1.z) * 0.35);
     const spinB2 = segSpin(Math.PI * 0.55, Math.PI * 0.3);
-    await tween(0.11 / S, k => {
+    await tween(0.11 / SP, k => {
       spinB2(k);
       dice.position.lerpVectors(b1To, b2To, k);
       dice.position.y = p1.y + Math.sin(k * Math.PI) * 0.25;
-      shadowDirty();
+      shadowTick();
     });
 
     /* ⑤ 定格：最后一段 slerp 精确收敛到 q1（点数面朝上），随后 copy 兜底浮点误差 */
     sfxTick();
     const q2 = dice.quaternion.clone();
-    await tween(0.07 / S, k => {
+    await tween(0.07 / SP, k => {
       const e = easeInOut(k);
       dice.quaternion.slerpQuaternions(q2, q1, e);
       dice.position.lerpVectors(b2To, p1, e);
-      shadowDirty();
+      shadowTick();
     });
     dice.quaternion.copy(q1);
     dice.position.copy(p1);
     diceRolling = false;
 
     /* ⑥ 结果停留 ≥0.9/spd：金色呼吸高亮保持醒目，停留结束才 resolve（角色才开始移动） */
-    await tween(0.9 / S, k => {
+    await tween(Math.max(0.35, 0.9 / S), k => {
       const pulse = (0.3 + Math.sin(k * Math.PI * 6) * 0.22) * (1 - k * 0.4);
       for (let i = 0; i < 6; i++) {
         const m = dice.material[i];
