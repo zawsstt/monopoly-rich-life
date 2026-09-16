@@ -30,19 +30,23 @@ const CFG = {
  * 素材：Kenney Toon Characters 1（CC0）
  * avatarImg=面板头像  tokenImg=棋盘待机  poseHit=被捕姿势  poseCheer=胜利姿势 */
 /* 入狱案由池：踩拘留所/超速罚单未指定案由时随机抽取（12 种，多样性） */
+/* 收押案由池 —— 按法律规范分层（sendToJail 依 tier 抽取）：
+ *  tier:'prison' 刑事犯罪 → 监狱（12 号格）：收监服刑、可保释 / 出狱许可证 / 蹲满回合
+ *  tier:'detain' 治安·行政违法 → 拘留所（32 号格）：行政拘留 1 回合 + 罚款，不可保释
+ *  tier:'fine'   轻微违章 → 只罚款不收押（如违章停车：罚款扣分、车辆拖移） */
 const JAIL_CASES = [
-  { icon: '🏎️', text: '涉嫌非法飙车 · 押送监狱服刑' },
-  { icon: '🍺', text: '酒后驾车 · 罚款并拘留' },
-  { icon: '🧾', text: '做假账偷税漏税 · 依法拘留' },
-  { icon: '🥊', text: '聚众斗殴 · 治安拘留' },
-  { icon: '🚦', text: '闯红灯逃逸 · 全城通缉中' },
-  { icon: '🍢', text: '无证占道摆摊 · 请去喝茶' },
-  { icon: '🎤', text: '半夜K歌扰民 · 邻里联名举报' },
-  { icon: '🅿️', text: '违章停车堵大门 · 车主集体报案' },
-  { icon: '🏰', text: '私闯他人豪宅 · 被保安当场按住' },
-  { icon: '💸', text: '非法集资跑路 · 半路被截获' },
-  { icon: '🦖', text: '遛恐龙不拴绳 · 惊吓路人被拘留' },
-  { icon: '🎨', text: '涂鸦地铁车厢 · 被监控拍个正着' },
+  { tier: 'prison', icon: '🏎️', text: '危险驾驶飙车 · 依法逮捕押送监狱' },
+  { tier: 'prison', icon: '🧾', text: '做假账偷税漏税 · 涉嫌逃税罪收监' },
+  { tier: 'prison', icon: '🥊', text: '聚众斗殴致人重伤 · 刑事拘留收监' },
+  { tier: 'prison', icon: '💸', text: '非法集资跑路 · 半路截获收监' },
+  { tier: 'prison', icon: '🏰', text: '私闯他人豪宅 · 涉嫌非法侵入住宅收监' },
+  { tier: 'prison', icon: '🚦', text: '闯红灯肇事逃逸 · 全城通缉落网收监' },
+  { tier: 'detain', icon: '🍺', text: '酒后驾车 · 暂扣驾照，行政拘留', fine: 1500 },
+  { tier: 'detain', icon: '🍢', text: '无证占道经营 · 城管联合执法，行政拘留', fine: 800 },
+  { tier: 'detain', icon: '🎤', text: '半夜K歌扰民 · 邻里联名举报，治安拘留', fine: 600 },
+  { tier: 'detain', icon: '🦖', text: '遛恐龙不拴绳 · 惊吓路人，治安拘留', fine: 500 },
+  { tier: 'detain', icon: '🎨', text: '涂鸦地铁车厢 · 监控拍个正着，治安拘留并责令清理', fine: 1000 },
+  { tier: 'fine',   icon: '🅿️', text: '违章停车堵大门 · 罚款扣分，车辆拖移', fine: 1000 },
 ];
 
 const CHARACTERS = [
@@ -163,10 +167,10 @@ const CHANCE_CARDS = [
   { icon:'🍜', title:'请客吃饭',   desc:'老同学聚会你抢着买单，- $3,000',           money:-3000, toPot:true, cut:{ fx:'pulse', bg:'warm' } },
   { icon:'🚀', title:'专机送你',   desc:'豪华专机直达起点领工资！',                 moveTo:0, fly:true, cut:{ fx:'drive', bg:'sky', sprite:'✈️', rain:'☁️' } },
   { icon:'🔙', title:'走错路了',   desc:'导航失灵，后退 3 格',                      moveRel:-3, cut:{ fx:'back', bg:'gray', sprite:'🔙' } },
-  { icon:'🚕', title:'前往车站',   desc:'出差在即，火速赶到最近的车站',             nearest:'station', cut:{ fx:'drive', bg:'sky', sprite:'🚕' } },
+  { icon:'🚕', title:'前往车站',   desc:'出差在即，出租车火速赶到最近的车站',       nearest:'station', ride:'taxi', cut:{ fx:'drive', bg:'sky', sprite:'🚕' } },
   { icon:'✈️', title:'环游世界',   desc:'免费航班直达 垦丁大街',                    moveTo:39, fly:true, cut:{ fx:'drive', bg:'sky', sprite:'✈️', rain:'☁️' } },
   { icon:'🚔', title:'超速罚单',   desc:'飙车被逮个正着，直接收监！',               gotoJail:true, jailReason:'🏎️ 涉嫌非法飙车 · 押送监狱服刑', cut:{ fx:'shake', bg:'red', sprite:'🚔' } },
-  { icon:'🍺', title:'酒后挪车',   desc:'酒后挪车也是酒驾，直接收监！',             gotoJail:true, jailReason:'酒后驾车 · 罚款并拘留', cut:{ fx:'shake', bg:'red', sprite:'🍺' } },
+  { icon:'🍺', title:'酒后挪车',   desc:'酒后挪车也是酒驾：暂扣驾照、罚款 $1,500，行政拘留一回合！', gotoJail:true, jailTier:'detain', jailFine:1500, jailReason:'🍺 酒后驾车 · 暂扣驾照，行政拘留', cut:{ fx:'shake', bg:'red', sprite:'🍺' } },
   { icon:'🎫', title:'出狱许可证', desc:'获得一张出狱许可证，收好以备不时之需',     bailCard:true, cut:{ fx:'pulse', bg:'gold', sprite:'🎫' } },
   { icon:'🎂', title:'生日快乐',   desc:'今天你生日，每位玩家送你 $1,000',          eachFrom:1000, cut:{ fx:'pulse', bg:'red', rain:'🎉' } },
   { icon:'🎁', title:'乔迁之喜',   desc:'你乔迁新居发红包，给每位玩家 $1,000',      eachTo:1000, cut:{ fx:'pulse', bg:'warm', rain:'🎊' } },
@@ -194,8 +198,8 @@ const DESTINY_CARDS = [
   { icon:'🎁', title:'慈善抽奖',   desc:'善有善报，资产最低者获得 $4,000',          poorestGets:4000, cut:{ fx:'pulse', bg:'purple', rain:'🎊' } },
   { icon:'🏗️', title:'市政施工',   desc:'规划调整，随机一名玩家的随机建筑被拆除一层', randomDemolish:true, cut:{ fx:'shake', bg:'warm', sprite:'🏗️', rain:'💨' } },
   { icon:'🚧', title:'交通管制',   desc:'前方封路，你原地休息一回合',               skip:1, cut:{ fx:'pulse', bg:'gray', sprite:'🚧' } },
-  { icon:'🧾', title:'做假账被查', desc:'偷税漏税锒铛入狱，全场围观',               gotoJail:true, jailReason:'偷税漏税 · 依法拘留', cut:{ fx:'shake', bg:'news', sprite:'🧾' } },
-  { icon:'🥊', title:'斗殴滋事',   desc:'谈判破裂大打出手，警察带走了你',           gotoJail:true, jailReason:'聚众斗殴 · 治安拘留', cut:{ fx:'shake', bg:'gray', sprite:'🥊' } },
+  { icon:'🧾', title:'做假账被查', desc:'偷税漏税涉嫌逃税罪，锒铛入狱，全场围观',     gotoJail:true, jailTier:'prison', jailReason:'🧾 做假账偷税漏税 · 涉嫌逃税罪收监', cut:{ fx:'shake', bg:'news', sprite:'🧾' } },
+  { icon:'🥊', title:'斗殴滋事',   desc:'谈判破裂大打出手，治安拘留一回合 + 罚款 $1,000', gotoJail:true, jailTier:'detain', jailFine:1000, jailReason:'🥊 聚众斗殴滋事 · 治安拘留', cut:{ fx:'shake', bg:'gray', sprite:'🥊' } },
   { icon:'🏆', title:'彩票开奖',   desc:'幸运儿竟是你！独得全部奖池',               potWin:true, cut:{ fx:'pulse', bg:'gold', rain:'🎉' } },
   { icon:'🎬', title:'剧组取景',   desc:'你家上电视了，+ $7,000',     money:+7000, cut:{ fx:'rise', bg:'gold', rain:'🪙' } },
   { icon:'🌧️', title:'梅雨季',    desc:'出行不便，全体玩家 - $1,000', global:-1000, toPot:true, cut:{ fx:'fall', bg:'gray', rain:'💧' } },
