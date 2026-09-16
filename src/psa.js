@@ -6,7 +6,7 @@
  *  - 演出：复用 ui.arrestCutscene → 警车押送到 32 拘留所格（不置 inJail，无服刑逻辑）→ 人物消失
  *  - 管控：触发者本机终端进入影院模式锁屏；管控期 PSA.shouldSkip(seat) 令 playTurn 自动跳过
  *          AI / 联机远程座位无本机终端可锁 → 公告 + skipNext 代替（规则完备性兜底）
- *  - 视频：串行 HEAD 探测 gongyi_movie/1.mp4..12.mp4（3s/个），全无则降级「文字净化」30s 倒计时
+ *  - 视频：串行 HEAD 探测 gongyi_movie/视频A..F.mp4（3s/个），全无则降级「文字净化」30s 倒计时
  *  - 铁律：任何故障都有限时出口 —— ended / 文字倒计时 / dur+45s 看门狗，玩家永不被永久锁死
  *  - 防逃避：遮罩存在期间 beforeunload/pagehide → localStorage.df_honor_v1.violated（含时间戳）+ dishonored
  *            下局 newGame 读 dishonored（一次性消费）→ 初始资金 −20%（取整百）+「失信人员」角标
@@ -22,7 +22,8 @@ const PSA = (() => {
   const LAST_KEY = 'df_psa_last';             // 上次播放的片源序号（sessionStorage，避免连续重复）
   const EXEMPT_KEY = 'df_psa_exempt';         // 教育豁免开关（'1' = 豁免）
   const MOVIE_BASES = ['gongyi_movie/', '../gongyi_movie/'];   // 仓库根 gongyi_movie/：同 Web 根优先，其次上级（serve 仓库根时页面位于 /monopoly/）
-  const MOVIE_COUNT = 12;                     // 探测 1.mp4 .. 12.mp4
+  const MOVIE_NAMES = ['视频A', '视频B', '视频C', '视频D', '视频E', '视频F'];   // 改名后的片源（规避原始标题）
+  const MOVIE_COUNT = MOVIE_NAMES.length;     // 探测 视频A.mp4 .. 视频F.mp4
   const HEAD_TIMEOUT_MS = 3000;               // 单个 HEAD 超时
   const PROBE_BUDGET_MS = 15000;              // 探测总预算（超时即用已有结果）
   const CUSTODY_POS = 32;                     // 拘留所格（BOARD[32] gotojail）
@@ -133,7 +134,7 @@ const PSA = (() => {
     outer: for (let n = 1; n <= count; n++) {
       for (const base of bases) {
         if (Date.now() > deadline) break outer;
-        const url = base + n + '.mp4';
+        const url = base + encodeURIComponent(MOVIE_NAMES[n - 1]) + '.mp4';   // 中文名按 URL 编码请求
         let ok = false;
         try { ok = await head(url); } catch (e) { ok = false; }
         if (ok) { found.push({ n, url, dur: 0 }); break; }   // 同序号只认首个命中的 base
