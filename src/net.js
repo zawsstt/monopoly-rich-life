@@ -94,7 +94,7 @@ const NET = (() => {
               const h = handlers.user_rejoin;
               if (h) h(seat);
               /* 重连者往往是刷新过的空白页：先下发完整开局快照重建棋盘，再补发断线期间挂起的决策 */
-              send(conn, { t: 'start', cfg: { maxRounds: G.maxRounds }, snap: snapshot(), rejoin: true });
+              send(conn, { t: 'start', cfg: { maxRounds: G.maxRounds, theme: window.__boardTheme || 'classic' }, snap: snapshot(), rejoin: true });
               const pend = pendingBySeat.get(seat);
               if (pend) { for (const pm of pend) send(conn, pm); }
             }
@@ -277,7 +277,7 @@ const NET = (() => {
       players: G.players.map(p => ({
         idx: p.idx, charId: p.charId, name: p.name || null, ai: p.ai,
         money: p.money, pos: p.pos, alive: p.alive, inJail: p.inJail,
-        jailTurns: p.jailTurns, skipNext: p.skipNext, shield: p.shield,
+        jailTurns: p.jailTurns, skipNext: p.skipNext, detained: !!p.detained, shield: p.shield,
         insurance: !!p.insurance, bailiff: !!p.bailiff, piggy: !!p.piggy,   /* 道具体系 2.0 状态槽：客人面板徽章需同步（公开信息） */
         forcedDice: p.forcedDice, bailCards: p.bailCards, props: p.props,
       })),
