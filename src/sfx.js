@@ -52,6 +52,34 @@ const SFX = (() => {
     src.start();
   }
 
+  /* --- 幂等的 context 恢复 / 挂起（移动端手势解锁 + 页面可见性） -----------
+   * - 只在对应状态下调用 resume()/suspend()：已 running / suspended 时重复
+   *   事件不会产生第二次调用（幂等、可重入）。
+   * - iOS 部分场景（某些 WebView、快速点按）只把 touchend 算作合法手势，故在
+   *   main.js 各按钮 pointerdown/click 之外补充 touchend 解锁路径。
+   * - iOS 静音键（响铃/静音拨片）同样没有任何网页 API 可检测，WebAudio 输出
+   *   也受其影响——属平台限制而非 bug，如实接受，不做伪检测、不做绕过。 */
+  function resumeCtx() {
+    const c = ctx;   /* 不在此创建 ctx：创建只发生在 ensure() 的解锁/首播路径 */
+    if (c && (c.state === 'suspended' || c.state === 'interrupted')) {
+      try { const p = c.resume(); if (p && p.catch) p.catch(() => { /* ignore */ }); } catch (e) { /* ignore */ }
+      return true;
+    }
+    return false;
+  }
+  function suspendCtx() {
+    const c = ctx;
+    if (c && c.state === 'running') {
+      try { const p = c.suspend(); if (p && p.catch) p.catch(() => { /* ignore */ }); } catch (e) { /* ignore */ }
+      return true;
+    }
+    return false;
+  }
+  /* 手势兜底：iOS 某些场景只有 touchend 被算作用户手势（running 时 no-op，幂等） */
+  document.addEventListener('touchend', () => { const c = ensure(); if (c) resumeCtx(); }, { passive: true, capture: true });
+  /* 页面隐藏挂起 ctx（省电 + 规避 iOS 后台抢占），回前台恢复；两者皆幂等 */
+  document.addEventListener('visibilitychange', () => { if (document.hidden) suspendCtx(); else resumeCtx(); });
+
   /* --- 合成音 --- */
   function tone(freq, dur, { type = 'sine', vol = 0.2, when = 0, slide = 0 } = {}) {
     const c = ensure(); if (!c || !enabled) return;
@@ -68,7 +96,7 @@ const SFX = (() => {
 
   let hopFlip = false;
   const api = {
-    unlock() { const c = ensure(); if (c && c.state === 'suspended') c.resume(); },
+    unlock() { const c = ensure(); if (c) resumeCtx(); },
     loadSamples,
     setEnabled(v) { enabled = v; try { localStorage.setItem('df_sfx', v ? '1' : '0'); } catch (e) { /* ignore */ } if (bgmGain) bgmGain.gain.value = v ? 0.16 : 0; if (!v) api.bgmStop(); },
     isEnabled() { return enabled; },
