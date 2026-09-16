@@ -7,6 +7,8 @@ const main = (() => {
   const $ = (s, el) => (el || document).querySelector(s);
   const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
 
+  let boardTheme = 'classic';
+  try { if (localStorage.getItem('df_theme') === 'modern') boardTheme = 'modern'; } catch (e) { /* */ }
   let selectedChar = CHARACTERS[0].id;
   let aiCount = 3;
   let humanCount = 1;      // 同屏本地玩家数（1 = 单人 vs AI；2–4 = 同一台电脑轮流操作）
@@ -92,6 +94,13 @@ const main = (() => {
       }
       SFX.click();
     }));
+    /* 棋盘风格：经典古风 / 现代写实（?theme=modern 等价；选择持久化 df_theme） */
+    $$('#opt-board button').forEach(b => b.addEventListener('click', () => {
+      boardTheme = b.dataset.bt;
+      $$('#opt-board button').forEach(x => x.classList.toggle('on', x === b));
+      try { localStorage.setItem('df_theme', boardTheme); } catch (e) { /* */ }
+      SFX.click();
+    }));
   }
 
   function pickChars(cfg) {
@@ -129,6 +138,7 @@ const main = (() => {
     }
 
     lastConfig = cfg;
+    window.__boardTheme = boardTheme;   /* 棋盘风格：modern 时地产消费 Props3DModern */
     const { chars, humanChar, seats } = pickChars(cfg);
     $('#start-screen').classList.add('hidden');
     $('#game-screen').classList.remove('hidden');
