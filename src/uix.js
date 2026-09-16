@@ -184,7 +184,8 @@ const ui = (() => {
     const r = tileEl.getBoundingClientRect();
     const w = deedHoverEl.offsetWidth || 180;
     let x = r.left + r.width / 2 - w / 2;
-    x = Math.max(8, Math.min(innerWidth - w - 8, x));
+    const stageW = (window.__stage && window.__stage.w) || innerWidth;
+    x = Math.max(8, Math.min(stageW - w - 8, x));
     const pos = gridPos(i);
     const y = (pos.side === 'top' || pos.side === 'right') ? r.bottom + 8 : r.top - deedHoverEl.offsetHeight - 8;
     deedHoverEl.style.left = x + 'px';
@@ -664,6 +665,9 @@ const ui = (() => {
   });
 
   /* ================= CSS 3D 骰子 ================= */
+  /* 展示倾角：正对相机的立方体只剩一张平面（跟随视角里像一张白纸），固定叠一个俯视 + 侧转，
+   * 让顶面和一个侧面始终露出来读出立体；点数面对齐由后面的 rotateX/rotateY 负责，二者相互独立 */
+  const DICE_TILT = 'rotateX(-22deg) rotateY(28deg) ';
   function buildDice() {
     const d = $('#dice3d');
     d.innerHTML = '';
@@ -674,7 +678,7 @@ const ui = (() => {
       d.appendChild(f);
     }
     d.parentElement.classList.remove('rolling');
-    d.style.transform = 'rotateX(0deg) rotateY(0deg)';
+    d.style.transform = DICE_TILT + 'rotateX(0deg) rotateY(0deg)';
   }
 
   const FACE_ROT = { 1: [0, 0], 2: [0, -90], 3: [0, -180], 4: [0, -270], 5: [-90, 0], 6: [90, 0] };
@@ -693,7 +697,7 @@ const ui = (() => {
     diceRot.y = Math.ceil(diceRot.y / 360) * 360 + spinY + fy;
     const cssMs = Math.max(120, 1050 / Math.max(0.1, G.speed || 1));
     d.style.transition = `transform ${cssMs}ms cubic-bezier(.22,.68,.16,1)`;
-    d.style.transform = `rotateX(${diceRot.x}deg) rotateY(${diceRot.y}deg)`;
+    d.style.transform = DICE_TILT + `rotateX(${diceRot.x}deg) rotateY(${diceRot.y}deg)`;
     await sleep(1080);
     wrap.classList.remove('rolling');
     // 结果停留 ≥0.9s/spd：骰子定格在点数面上，让玩家看清后再让角色移动
@@ -1942,7 +1946,9 @@ const ui = (() => {
   function confetti() {
     const cv = $('#confetti');
     const ctx = cv.getContext('2d');
-    cv.width = innerWidth; cv.height = innerHeight;
+    /* 舞台尺寸（强制横屏旋转后与视口宽高互换；main.js 维护 __stage） */
+    const st = window.__stage || { w: innerWidth, h: innerHeight };
+    cv.width = st.w || innerWidth; cv.height = st.h || innerHeight;
     cv.style.display = 'block';
     const colors = ['#f0a818', '#ff5964', '#2ecc71', '#3d7bff', '#b45cf2', '#22d3d3', '#ffd166'];
     const parts = Array.from({ length: 160 }, () => ({
