@@ -84,7 +84,7 @@ function newGame(charIds, humanCharId, opts) {
   G.players = charIds.map((cid, i) => ({
     idx: i, charId: cid, ai: cid !== humanCharId, name: null,
     money: startMoney, pos: 0, alive: true,
-    inJail: false, jailTurns: 0, skipNext: 0, shield: false,
+    inJail: false, jailTurns: 0, skipNext: 0, detained: false, shield: false,
     insurance: false, bailiff: false, piggy: false,   // 道具体系 2.0 一次性状态槽（复用 shield 模式）
     forcedDice: null, bailCards: 0, props: {},
     custody: false, honorTag: null,                   // 净化心灵管控态 / 失信人员角标（psa.js 驱动）
@@ -242,11 +242,18 @@ async function playTurn(gid) {
     return;
   }
 
-  // —— 跳过回合（交通管制） ——
+  // —— 跳过回合（交通管制 / 行政拘留） ——
   if (player.skipNext > 0) {
     player.skipNext--;
-    ui.toast(`⛔ ${pname(player)} 原地休息一回合`, '🚧');
-    ui.log(`${pname(player)} 原地休息一回合`, 'bad');
+    if (player.detained) {
+      ui.toast(`🚔 ${pname(player)} 拘留所里蹲一回合`, '🚔');
+      ui.log(`${pname(player)} 行政拘留中，本回合暂停`, 'bad');
+      if (player.skipNext <= 0) { player.detained = false; ui.log(`${pname(player)} 拘留期满，下回合恢复行动`, 'info'); }
+      ui.updatePlayers();
+    } else {
+      ui.toast(`⛔ ${pname(player)} 原地休息一回合`, '🚧');
+      ui.log(`${pname(player)} 原地休息一回合`, 'bad');
+    }
     await sleep(700);
     return;
   }
@@ -391,50 +398,85 @@ async function moveDirect(gid, player, target, { collectSalary = true, fx = null
   ui.updatePlayers();
 }
 
-async function sendToJail(gid, player, { escort = true, cutscene = true, reason = null, causer = null } = {}) {
-  /* 未指定案由 → 从入狱案由池随机（12 种，多样性） */
+/* 收押总入口 —— 按法律规范分三层（案由池 JAIL_CASES 的 tier）：
+ *  prison（刑事）→ 监狱 12 号格：inJail 服刑、可保释；detain（治安/行政）→ 拘留所 32 号格：跳过 1 回合 + 罚款、不可保释；
+ *  fine（轻微违章）→ 只罚款不收押。未指定 reason 时按 tier 从案由池抽取；致人收押（prison/detain）均计入 jailCaused 归因。 */
+const DETAIN_POS = 32;   // 拘留所（BOARD[32] gotojail；与净化心灵 custody 同格）
+async function sendToJail(gid, player, { escort = true, cutscene = true, reason = null, causer = null, tier = 'prison', fine = 0 } = {}) {
+  if (tier !== 'detain' && tier !== 'fine') tier = 'prison';
   if (!reason && typeof JAIL_CASES !== 'undefined' && JAIL_CASES.length) {
-    const cs = JAIL_CASES[Math.floor(Math.random() * JAIL_CASES.length)];
+    const pool = JAIL_CASES.filter(c => (c.tier || 'prison') === tier);
+    const src = pool.length ? pool : JAIL_CASES;
+    const cs = src[Math.floor(Math.random() * src.length)];
     reason = cs.icon + ' ' + cs.text;
+    if (!fine && cs.fine) fine = cs.fine;
   }
-  // 全屏逮捕过场 → 警车押送绕棋盘到监狱
+  const payFine = () => {
+    if (!(fine > 0) || player.money <= 0) return 0;
+    const paid = Math.min(player.money, fine);
+    player.money -= paid;
+    ui.moneyFloat(player, -paid);
+    return paid;
+  };
+  /* 只罚款：不押送不收押 */
+  if (tier === 'fine') {
+    const paid = payFine();
+    SFX.pay && SFX.pay();
+    ui.toast(`🅿️ ${pname(player)} ${reason}${paid ? `，罚款 ${fmt(paid)}` : ''}`, '💸');
+    ui.log(`${pname(player)} ${reason}${paid ? `，罚款 ${fmt(paid)}` : ''}`, 'pay');
+    ui.updatePlayers();
+    return;
+  }
+  const dest = tier === 'prison' ? JAIL_POS : DETAIN_POS;
+  // 全屏逮捕过场 → 警车押送绕棋盘到监狱 / 拘留所
   if (cutscene && !G.over) {
     await ui.arrestCutscene(player, reason);
     if (gid !== G.gameId) return;
   }
-  if (escort && player.pos !== JAIL_POS) {
+  if (escort && player.pos !== dest) {
     ui.setTokenHidden(player.idx, true);   // 押送途中只展示警车（头顶「收押中」提示语），人物隐藏
     ui.rideStart(player, 'police');
-    ui.news(`🚨 警车出动！${pname(player)} 被当场逮捕，押送入狱！`);
+    ui.news(tier === 'prison' ? `🚨 警车出动！${pname(player)} 被当场逮捕，押送入狱！` : `🚔 ${pname(player)} 被带走接受治安处罚，押往拘留所！`);
     let guard = 0;
-    while (player.pos !== JAIL_POS && guard++ < BOARD.length) {
+    while (player.pos !== dest && guard++ < BOARD.length) {
       if (gid !== G.gameId) { ui.rideEnd(player); break; }
       player.pos = (player.pos + 1) % BOARD.length;
       await ui.moveToken(player, true, { fast: true });
     }
     await sleep(400);
-    ui.rideEnd(player);                    // 送达监狱：车辆消失，人物保持隐藏（下面入狱）
+    ui.rideEnd(player);                    // 送达：车辆消失
   } else {
-    player.pos = JAIL_POS;
+    player.pos = dest;
     ui.moveToken(player, false);
   }
-  player.inJail = true;
-  player.jailTurns = 0;
-  ui.setTokenHidden(player.idx, true);     // 入狱服刑：该格不显示角色 token，出狱时恢复
-  if (G.stats) {
-    G.stats[player.idx].jailed++;
-    /* 入狱归因（诬陷卡等「致人入狱」手段）：受害者记 jailedBy[causer]，使用者记 jailCaused
-     * —— 净化心灵彩蛋（DESIGN_PSA_EGG.md）按 jailCaused ≥3 触发，causer===player.idx（自伤）不计 */
-    if (causer != null && causer !== player.idx && G.stats[causer]) {
-      G.stats[causer].jailCaused++;
-      const jb = G.stats[player.idx].jailedBy || (G.stats[player.idx].jailedBy = {});
-      jb[causer] = (jb[causer] || 0) + 1;
-    }
+  if (G.stats && causer != null && causer !== player.idx && G.stats[causer]) {
+    /* 收押归因（诬陷卡 / 路障逼停等「致人收押」手段）：受害者记 jailedBy[causer]，使用者记 jailCaused
+     * —— 净化心灵彩蛋（DESIGN_PSA_EGG.md）按 jailCaused ≥3 触发，causer===player.idx（自伤）不计；监狱与拘留均计 */
+    G.stats[causer].jailCaused++;
+    const jb = G.stats[player.idx].jailedBy || (G.stats[player.idx].jailedBy = {});
+    jb[causer] = (jb[causer] || 0) + 1;
   }
-  ui.updateTile(JAIL_POS);
-  SFX.jail();
-  ui.toast(`⛓️ ${pname(player)} 被关进了监狱！`, '⛓️');
-  ui.log(`${pname(player)} 进了监狱`, 'bad');
+  if (tier === 'prison') {
+    player.inJail = true;
+    player.jailTurns = 0;
+    ui.setTokenHidden(player.idx, true);     // 入狱服刑：该格不显示角色 token，出狱时恢复
+    if (G.stats) G.stats[player.idx].jailed++;
+    ui.updateTile(JAIL_POS);
+    SFX.jail();
+    ui.toast(`⛓️ ${pname(player)} 被关进了监狱！`, '⛓️');
+    ui.log(`${pname(player)} 进了监狱（${reason}）`, 'bad');
+  } else {
+    /* 行政拘留：站在拘留所格公开受罚，下一回合暂停；罚款；不可保释、不计服刑 */
+    player.detained = true;
+    player.skipNext = (player.skipNext | 0) + 1;
+    const paid = payFine();
+    ui.setTokenHidden(player.idx, false);
+    ui.updateTile(DETAIN_POS);
+    SFX.jail();
+    ui.toast(`🚔 ${pname(player)} 被行政拘留 1 回合${paid ? `，罚款 ${fmt(paid)}` : ''}！`, '🚔');
+    ui.log(`${pname(player)} 被行政拘留（${reason}${paid ? `，罚款 ${fmt(paid)}` : ''}）`, 'bad');
+  }
+  ui.updatePlayers();
   /* 净化心灵彩蛋：归因计数就位后的单点触发判定（阈值 3 / 同局一次，判定与演出全在 psa.js）
    * 这里 await 的只是过场 + 押送演出（避免与本次逮捕过场叠画），视频管控在 psa.js 内异步进行，不阻塞引擎 */
   if (window.PSA && PSA.notifyJailCaused && causer != null) {
@@ -454,7 +496,10 @@ async function runAuction(gid, idx, { seller } = {}) {
   const minStep = Math.max(200, Math.round(market * CFG.AUCTION_STEP / 100) * 100);
   let curBid = bankPrice;
   let leader = null;
-  const order = G.players.filter(p => p.alive && p.idx !== seller.idx);
+  /* 在押（监狱 / 拘留所）或净化管控中的玩家不参与拍卖：不入席、不询问（默认跳过并公告） */
+  const detained = p => !!(p.inJail || p.custody || (window.PSA && PSA.shouldSkip && PSA.shouldSkip(p.idx)));
+  const skipped = G.players.filter(p => p.alive && p.idx !== seller.idx && detained(p));
+  const order = G.players.filter(p => p.alive && p.idx !== seller.idx && !detained(p));
   const canAffordAny = order.some(p => p.money >= bankPrice);
 
   // 没有任何人有能力接盘 → 直接银行保底回收
@@ -467,7 +512,10 @@ async function runAuction(gid, idx, { seller } = {}) {
   ui.toast(`🔨 ${t.name} 挂牌拍卖！底价 ${fmt(bankPrice)}（银行半价保底）${level ? `（含${LEVEL_NAMES[level]}建筑）` : ''}`, '🔨');
   ui.log(`🔨 <b>${t.name}</b> 挂牌拍卖：市值 ${fmt(market)}，底价 ${fmt(bankPrice)}（低于此价银行直接回收），每次加价 ${fmt(minStep)}`, 'build');
   ui.news(`🔨 ${t.name} 挂牌拍卖中，底价 ${fmt(bankPrice)}！`);
-  ui.auctionOpen({ idx, market, bankPrice, minStep, level, seller: seller.idx });   // 打开拍卖大厅
+  skipped.forEach(p => ui.log(`⛓️ ${pname(p)} ${p.custody ? '净化管控中' : '在押'}，不参与本场竞拍`, 'info'));
+  /* 本机没有可参与的人类（都在押 / 都是 AI / 都是联机远端）→ 不开大厅，拍卖在后台快速结算只出战报 */
+  const localEligible = order.some(p => !p.ai && !(NET.active && NET.isRemoteSeat(p.idx)));
+  if (localEligible) ui.auctionOpen({ idx, market, bankPrice, minStep, level, seller: seller.idx });   // 打开拍卖大厅
 
   let pos = 0;
   if (seller) {
@@ -786,7 +834,7 @@ async function resolveTile(gid, player, depth) {
     case 'gotojail':
       ui.log(`${pname(player)} 踩中拘留所，被警察带走`, 'bad');
       await sleep(300);
-      await sendToJail(gid, player, { causer: (G._stopCause != null && G._stopCause !== player.idx) ? G._stopCause : null });
+      await sendToJail(gid, player, { tier: 'detain', causer: (G._stopCause != null && G._stopCause !== player.idx) ? G._stopCause : null });
       G._stopCause = null;
       await sleep(500);
       break;
@@ -879,7 +927,7 @@ async function applyCard(gid, player, card, depth) {
     gainMoney(player, win, { label:'奖池' }); if (G.stats) G.stats[player.idx].potWon += win;
     ui.log(`🏆 ${pname(player)} 独得奖池 <b>${fmt(win)}</b>`, 'good');
   }
-  if (card.gotoJail) { await sendToJail(gid, player, { reason: card.jailReason || null }); await sleep(400); }
+  if (card.gotoJail) { await sendToJail(gid, player, { reason: card.jailReason || null, tier: card.jailTier || 'prison', fine: card.jailFine || 0 }); await sleep(400); }
   if (card.bailCard) { player.bailCards++; ui.toast(`🎫 ${pname(player)} 获得出狱许可证`, '🎫'); ui.updatePlayers(); }
   if (card.eachFrom != null) {
     for (const q of alivePlayers()) {
@@ -933,7 +981,9 @@ async function applyCard(gid, player, card, depth) {
       if (BOARD[i2].type === card.nearest) { target = i2; break; }
     }
     await sleep(300);
-    await moveDirect(gid, player, target);
+    /* 出租车骑乘：出差卡由出租车沿马路载到目标格（ride: 'taxi'，模型 Special3D.taxi） */
+    if (card.ride) ui.toast(`🚕 ${pname(player)} 打到车了，直奔${BOARD[target].name}！`, '🚕');
+    await moveDirect(gid, player, target, { fx: card.ride || null });
     if (gid !== G.gameId) return;
     await resolveTile(gid, player, depth + 1);
   }
