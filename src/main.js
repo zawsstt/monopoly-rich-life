@@ -665,29 +665,42 @@ const main = (() => {
   function syncBoardThemeUI() {
     $$('#opt-board button').forEach(x => x.classList.toggle('on', x.dataset.bt === boardTheme));
   }
-  /* 2) 竖屏提示条：竖屏（高 > 宽）且宽 < 760 时显示「横屏体验更佳」，可关闭（本会话内不再弹）；
-   *    不强制、不遮挡操作，横屏 / 桌面下 CSS 一律隐藏（@media 兜底，与 JS 状态无关）。 */
-  const MOB_HINT_KEY = 'df_hint_rotate_dismissed';
-  function setupMobileHint() {
-    const hint = document.getElementById('mobile-hint');
-    if (!hint) return;
-    const dismissed = () => { try { return sessionStorage.getItem(MOB_HINT_KEY) === '1'; } catch (e) { return false; } };
-    const evaluate = () => {
-      const w = window.innerWidth || 0, h = window.innerHeight || 0;
-      const portraitPhone = w > 0 && h > w && w < 760;
-      hint.classList.toggle('show', portraitPhone && !dismissed());
+  /* 2) 强制横屏舞台：触屏小屏设备处于竖屏时，把整个 body 顺时针旋转 90° 当作横屏舞台（H5 横屏游戏惯例），
+   *    不再弹任何「请转屏」提示。舞台尺寸由 JS 以像素写入（iOS 动态工具栏下 100vh 不可靠）；
+   *    html.stage-short 标记矮舞台（≤520px）供 CSS 压缩顶栏 / 快报条。旋转后 view3d 通过 body.force-land
+   *    把指针坐标换算到舞台坐标系（见 view3d toStage）。
+   *    能原生锁横屏的环境（已安装 PWA / 部分安卓浏览器）在首次触控时顺带尝试 screen.orientation.lock，
+   *    不强制全屏；锁成功则系统转为横屏、resize 回调自动撤掉舞台旋转。 */
+  function setupForceLandscape() {
+    const body = document.body, rootEl = document.documentElement;
+    const coarse = () => {
+      try { return matchMedia('(pointer: coarse)').matches || (navigator.maxTouchPoints || 0) > 0; } catch (e) { return false; }
     };
-    const close = document.getElementById('mobile-hint-close');
-    if (close) close.addEventListener('click', () => {
-      try { sessionStorage.setItem(MOB_HINT_KEY, '1'); } catch (e) { /* 隐私模式等 */ }
-      hint.classList.remove('show');
-      try { SFX.click(); } catch (e) { /* */ }
-    });
+    const apply = () => {
+      const w = window.innerWidth || 0, h = window.innerHeight || 0;
+      const force = !!(w && h && h > w && Math.min(w, h) <= 820 && coarse());
+      if (force) { body.style.width = h + 'px'; body.style.height = w + 'px'; }
+      else if (body.classList.contains('force-land')) { body.style.width = ''; body.style.height = ''; }
+      body.classList.toggle('force-land', force);
+      const stageH = force ? w : h;
+      rootEl.classList.toggle('stage-short', stageH > 0 && stageH <= 520);
+      window.__stage = { w: force ? h : w, h: stageH, rotated: force };
+      try { if (typeof V3D !== 'undefined' && V3D && typeof V3D.resize === 'function') V3D.resize(); } catch (e) { /* 3D 未就绪 */ }
+    };
     let timer = 0;
-    const schedule = () => { clearTimeout(timer); timer = setTimeout(evaluate, 120); };   /* 旋转后 innerWidth/Height 需要一帧稳定 */
+    const schedule = () => { apply(); clearTimeout(timer); timer = setTimeout(apply, 120); };   /* 立即一次 + 旋转后尺寸稳定再一次 */
     window.addEventListener('resize', schedule);
     window.addEventListener('orientationchange', schedule);
-    evaluate();
+    apply();
+    let lockTried = false;
+    window.addEventListener('pointerdown', () => {
+      if (lockTried || !coarse()) return;
+      lockTried = true;
+      try {
+        const so = window.screen && screen.orientation;
+        if (so && typeof so.lock === 'function') { const p = so.lock('landscape'); if (p && p.catch) p.catch(() => {}); }
+      } catch (e) { /* 不支持 / 非全屏拒绝：走舞台旋转 */ }
+    }, { passive: true });
   }
 
   /* 每一步独立 try：任何一步抛错只记录、不连带跳过后续
@@ -702,7 +715,7 @@ const main = (() => {
     step('charCards', buildCharCards);
     step('bindStart', bindStart);
     step('boardThemeUI', syncBoardThemeUI);
-    step('mobileHint', setupMobileHint);
+    step('forceLandscape', setupForceLandscape);
     step('chrome', () => ui.bindChrome());
     step('gameOver', hookGameOver);
     step('sfx', () => SFX.loadSamples());
