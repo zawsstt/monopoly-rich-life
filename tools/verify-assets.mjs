@@ -42,9 +42,19 @@ for (const root of ROOTS) {
     const rel = relative('.', f).split(sep).join('/');
     const localSize = (await stat(f)).size;
     try {
-      const r = await tryN(() => fetch(`${PUB}/${rel}`), RETRY + 1);
-      const size = +(r.headers.get('content-length') || 0);
-      if (r.status === 200 && size === localSize) { nOk++; continue; }
+      const r = await tryN(() => fetch(`${PUB}/${rel}`, { headers: { range: 'bytes=0-0' } }), RETRY + 1);
+      if (r.status === 404) { nBad++; bad.push(`${rel} -> 404 不存在`); continue; }
+      let size;
+      if (r.status === 206) {
+        // content-range: bytes 0-0/<total> —— 1 字节探测拿到总长(CDN 对文本走 gzip 时无 content-length,Range 强制 identity)
+        const cr = r.headers.get('content-range') || '';
+        size = +(cr.match(/\/(\d+)$/)?.[1] || 0);
+      } else if (r.status === 200) {
+        const cl = +(r.headers.get('content-length') || 0);
+        if (cl === localSize) { size = cl; }          // 头里就有正确长度
+        else { size = (await r.arrayBuffer()).byteLength; }   // Range 被忽略/分块传输:读实际字节(会整包下载)
+      } else { nBad++; bad.push(`${rel} -> HTTP ${r.status}`); continue; }
+      if (size === localSize) { nOk++; continue; }
       nBad++; bad.push(`${rel} -> HTTP ${r.status}, 远端 ${size} / 本地 ${localSize}`);
     } catch (e) {
       nNet++; net.push(`${rel}: ${e && e.message ? e.message : String(e)}`);
