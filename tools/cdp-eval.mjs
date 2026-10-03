@@ -2,8 +2,9 @@
 const expr = process.argv[2];
 if (!expr) { console.error('usage: node cdp-eval.mjs "<js>"'); process.exit(1); }
 const PORT = process.env.CDP_PORT || '9222';
+const MATCH = process.env.CDP_MATCH || 'localhost:8123';   // tab URL 过滤(线上冒烟可设为 github.io)
 const list = await (await fetch(`http://localhost:${PORT}/json`)).json();
-const page = list.find(t => t.type === 'page' && t.url.includes('localhost:8123'));
+const page = list.find(t => t.type === 'page' && t.url.includes(MATCH));
 if (!page) { console.error('NO-GAME-TAB'); process.exit(1); }
 const ws = new WebSocket(page.webSocketDebuggerUrl);
 let id = 0;
