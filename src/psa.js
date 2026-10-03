@@ -22,8 +22,8 @@ const PSA = (() => {
   const LAST_KEY = 'df_psa_last';             // 上次播放的片源序号（sessionStorage，避免连续重复）
   const EXEMPT_KEY = 'df_psa_exempt';         // 教育豁免开关（'1' = 豁免）
   const MOVIE_BASES = (window.SB && SB.cdn ? [SB.asset('gongyi_movie/')] : []).concat(['gongyi_movie/', '../gongyi_movie/']);   // CDN 优先（Supabase Storage），仓库副本兜底
-  const MOVIE_NAMES = ['视频A', '视频B', '视频C', '视频D', '视频E', '视频F'];   // 改名后的片源（规避原始标题）
-  const MOVIE_COUNT = MOVIE_NAMES.length;     // 探测 视频A.mp4 .. 视频F.mp4
+  const MOVIE_NAMES = ['video_A', 'video_B', 'video_C', 'video_D', 'video_E', 'video_F'];   // ASCII 片名：Supabase Storage 拒收中文 key（InvalidKey）
+  const MOVIE_COUNT = MOVIE_NAMES.length;     // 探测 video_A.mp4 .. video_F.mp4
   const HEAD_TIMEOUT_MS = 3000;               // 单个 HEAD 超时
   const PROBE_BUDGET_MS = 15000;              // 探测总预算（超时即用已有结果）
   const CUSTODY_POS = 32;                     // 拘留所格（BOARD[32] gotojail）
