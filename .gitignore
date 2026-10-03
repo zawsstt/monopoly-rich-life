@@ -3,3 +3,7 @@ _smoke_*
 _audit_report.md
 node_modules/
 *.log
+
+# 交接文档与 IDE 配置(不提交)
+HANDOVER.md
+.idea/

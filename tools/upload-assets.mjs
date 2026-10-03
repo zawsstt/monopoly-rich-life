@@ -6,7 +6,11 @@
 import { createHash } from 'node:crypto';
 import { readdir, stat, readFile } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
-import { argv, env, exit } from 'node:process';
+import { argv, env, exit, cwd } from 'node:process';
+import { fileURLToPath } from 'node:url';
+
+/* 以脚本自身位置定位项目根（tools/ 的上级），免疫任意 cwd 启动 */
+process.chdir(fileURLToPath(new URL('..', import.meta.url)));
 
 const REF = 'rzzryotatqucfwtgjcaa';
 const SB = `https://${REF}.supabase.co`;
@@ -60,6 +64,14 @@ async function upload(path, bytes, type) {
 
 let nUp = 0, nSkip = 0, nFail = 0;
 const failures = [];
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function tryN(fn, n, tag) {
+  let lastErr;
+  for (let i = 0; i < n; i++) {
+    try { return await fn(); } catch (e) { lastErr = e; await sleep(400 * (i + 1)); }   // 抖动网络:短退避重试
+  }
+  throw lastErr;
+}
 for (const root of ROOTS) {
   const files = await walk(root);
   console.log(`[${root}] ${files.length} 个文件`);
@@ -67,11 +79,11 @@ for (const root of ROOTS) {
     const rel = relative('.', f).split(sep).join('/');
     try {
       const s = await stat(f);
-      const remote = await remoteInfo(rel).catch(e => { throw e; });
+      const remote = await tryN(() => remoteInfo(rel), 3, 'head');
       if (remote && remote.size === s.size) { nSkip++; continue; }   // 已存在同大小,跳过
       if (CHECK_ONLY) { console.log(`  差异: ${rel} (本地 ${s.size} / 远端 ${remote ? remote.size : '无'})`); nUp++; continue; }
       const buf = await readFile(f);
-      await upload(rel, buf, MIME[(rel.match(/\.[a-z0-9]+$/i) || [''])[0].toLowerCase()] || 'application/octet-stream');
+      await tryN(() => upload(rel, buf, MIME[(rel.match(/\.[a-z0-9]+$/i) || [''])[0].toLowerCase()] || 'application/octet-stream'), 3, 'post');
       console.log(`  上传: ${rel} (${(s.size / 1024).toFixed(0)} KB)`);
       nUp++;
     } catch (e) {
