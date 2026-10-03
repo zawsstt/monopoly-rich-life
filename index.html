@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <title>大富翁 · 富贵人生</title>
 <link rel="icon" href="assets/img/ico_coin.png?v=46">
-<link rel="stylesheet" href="css/style.css?v=55">
+<link rel="stylesheet" href="css/style.css?v=56">
 <script>
 /* 最早的错误收集器：在任何游戏脚本之前挂载 */
 window.__errs = [];
@@ -27,10 +27,13 @@ window.addEventListener('unhandledrejection', function (e) {
  * ============================================================ */
 window.SB = (function () {
   var REF = 'rzzryotatqucfwtgjcaa';
-  var BASE = 'https://' + REF + '.supabase.co';
   var KEY = 'sb_publishable_-Hn1HQlgTI7sT6TyzHb1Fw_lAlW30Km';
-  var CDN = BASE + '/storage/v1/object/public/game-assets/';
   var q = null; try { q = new URLSearchParams(location.search); } catch (e) { /* */ }
+  /* ?sb=http://host:port —— Supabase API 端点覆盖（联机链路本地联调/换项目用；覆盖时素材仍走本地副本） */
+  var SB_OVERRIDE = null;
+  try { SB_OVERRIDE = q && q.get('sb'); } catch (e) { /* */ }
+  var BASE = SB_OVERRIDE || ('https://' + REF + '.supabase.co');
+  var CDN = SB_OVERRIDE ? '' : (BASE + '/storage/v1/object/public/game-assets/');
   var on = true;
   try {
     if (q && q.get('cdn') === '0') on = false;
@@ -368,16 +371,16 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
 <!-- ===== 首屏加载器：脚本 / 首屏图片 / 主界面 BGM 由此统一预取（真实字节进度），全部就绪并执行完毕后才揭开加载遮罩。
      脚本标签为 type="text/plain" data-src，由下方加载器按文档顺序执行；data-size 为字节数（进度权重），由 tools_patch_boot_loader.py 生成。 ===== -->
 <script type="text/plain" data-src="js/lib/three.min.js?v=46" data-size="607790"></script>
-<script type="text/plain" data-src="src/data.js?v=55" data-size="24573"></script>
-<script type="text/plain" data-src="src/sfx.js?v=53" data-size="9319"></script>
-<script type="text/plain" data-src="src/bgm.js?v=53" data-size="6362"></script>
-<script type="text/plain" data-src="src/ai.js?v=51" data-size="12635"></script>
-<script type="text/plain" data-src="src/game.js?v=55" data-size="65923"></script>
+<script type="text/plain" data-src="src/data.js?v=56" data-size="24573"></script>
+<script type="text/plain" data-src="src/sfx.js?v=54" data-size="9319"></script>
+<script type="text/plain" data-src="src/bgm.js?v=54" data-size="6362"></script>
+<script type="text/plain" data-src="src/ai.js?v=52" data-size="12635"></script>
+<script type="text/plain" data-src="src/game.js?v=56" data-size="65923"></script>
 <script type="text/plain" data-src="src/career.js?v=51" data-size="44045"></script>
-<script type="text/plain" data-src="src/uix.js?v=55" data-size="135982"></script>
+<script type="text/plain" data-src="src/uix.js?v=56" data-size="135982"></script>
 <script type="text/plain" data-src="src/supa-rtc.js?v=55" data-size="6536"></script>
-<script type="text/plain" data-src="src/net.js?v=56" data-size="24926"></script>
-<script type="text/plain" data-src="src/view3d.js?v=55" data-size="149113"></script>
+<script type="text/plain" data-src="src/net.js?v=57" data-size="24926"></script>
+<script type="text/plain" data-src="src/view3d.js?v=56" data-size="149113"></script>
 <script type="text/plain" data-src="src/buildings3d.js?v=46" data-size="95501"></script>
 <script type="text/plain" data-btheme="classic" data-src="assets/models/props3d/prop_6.js?v=46" data-size="62155"></script>
 <script type="text/plain" data-btheme="classic" data-src="assets/models/props3d/prop_3.js?v=46" data-size="51095"></script>
@@ -448,8 +451,8 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
 <script type="text/plain" data-src="assets/models/chars3d/ren.js?v=48" data-size="35064"></script>
 <script type="text/plain" data-src="assets/models/chars3d/doudou.js?v=48" data-size="42788"></script>
 <script type="text/plain" data-src="assets/models/propFactories.js?v=46" data-size="12077"></script>
-<script type="text/plain" data-src="src/main.js?v=55" data-size="40893"></script>
-<script type="text/plain" data-src="src/psa.js?v=55" data-size="35828"></script>
+<script type="text/plain" data-src="src/main.js?v=56" data-size="40893"></script>
+<script type="text/plain" data-src="src/psa.js?v=56" data-size="35828"></script>
 <script type="text/plain" data-kind="img" data-src="assets/img/scene_poster.jpg" data-size="472131"></script>
 <script type="text/plain" data-kind="img" data-src="assets/img/face3_boss.png?v=40" data-size="106990"></script>
 <script type="text/plain" data-kind="img" data-src="assets/img/face3_doudou.png?v=40" data-size="99992"></script>

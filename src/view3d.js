@@ -2652,16 +2652,15 @@ const V3D = (() => {
   }
 
   /* ================= 主循环 ================= */
-  function startLoop() {
-    if (running && rafId) return;
-    running = true;
-    clock = clock || new THREE.Clock();
-    const loopFn = () => {
-      if (!running) { rafId = 0; return; }
-      rafId = requestAnimationFrame(loopFn);
-      const dt = Math.min(0.05, clock.getDelta());
-      if (!renderer || !container || container.offsetParent === null) return;  // 对局界面隐藏时休眠
-      worldT += dt;
+  let hbWatch = 0;
+  let lastTick = 0;
+  const loopFn = (dtOverride) => {
+    lastTick = performance.now();
+    if (!running) { rafId = 0; return; }
+    rafId = requestAnimationFrame(loopFn);
+    const dt = dtOverride != null ? dtOverride : Math.min(0.05, clock.getDelta());
+    if (!renderer || !container || container.offsetParent === null) return;  // 对局界面隐藏时休眠
+    worldT += dt;
 
       /* tween 队列 */
       for (let i = anims.length - 1; i >= 0; i--) {
@@ -2796,7 +2795,19 @@ const V3D = (() => {
       perfTick(dt);           /* FPS 滑动均值采样 → 持续低帧自动降档（只采真正渲染的帧） */
       renderer.render(scene, camera);
       updateCenterOverlay();
-    };
+  };
+  function startLoop() {
+    if (running && rafId) return;
+    running = true;
+    clock = clock || new THREE.Clock();
+    lastTick = performance.now();
+    /* rAF 看门狗：后台/被遮挡时 rAF 冻结 → loopFn 不再被调度 → 全部 tween 的 await 永挂
+     * （骰子/行走/过场），联机房主切后台 = 整桌卡死。停摆 600ms 后以 250ms 心跳接管
+     * （dt 放宽 0.25 稀疏推进），恢复可见 rAF 自动夺回；有 WebRTC/音频的页面不受深度节流 */
+    if (!hbWatch) hbWatch = setInterval(() => {
+      if (!running) return;
+      if (performance.now() - lastTick > 600) loopFn(Math.min(0.25, clock.getDelta()));
+    }, 250);
     rafId = requestAnimationFrame(loopFn);
   }
 

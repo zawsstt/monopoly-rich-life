@@ -203,10 +203,12 @@ const NET = (() => {
   }
 
   /* ---------- 客人 ---------- */
+  let joinCtx = null;   // { name, charId }：DataChannel 打开后补发 hello 用
   function join(code, name, charId, onReady, onFail, onLobby, onStage) {
     isHost = false; active = true;
     roomCode = String(code || '').toUpperCase().trim();
     myName = name;
+    joinCtx = { name, charId };
     let attempt = 0;
     let failTimer = 0;
     const tryOnce = () => {
@@ -250,6 +252,13 @@ const NET = (() => {
         st.dc = ev.channel;
         st.conn = makeConn(hostId, st.dc, pc);
         hostConn = st.conn;
+        /* DataChannel 打开后立即经通道补发 hello（房主入座/发 welcome 等的是通道里的 hello；
+         * WS 广播的那份只负责让房主发起建连——supa-rtc 迁移期两处都要有） */
+        const origOpen = st.dc.onopen;
+        st.dc.onopen = () => {
+          if (origOpen) origOpen();
+          try { st.conn.send(JSON.stringify({ t: 'hello', name: joinCtx && joinCtx.name, charId: joinCtx && joinCtx.charId, token: (typeof window !== 'undefined' && window.__mpToken) || null })); } catch (e) { /* */ }
+        };
         st.conn.ondata = raw => {
           let msg; try { msg = JSON.parse(raw); } catch (e) { return; }
           try { window.__mpLastMsg = Date.now(); } catch (e2) { /* */ }
