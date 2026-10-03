@@ -14,8 +14,9 @@
 
 const BGM = (() => {
   const MENU_SRC = 'assets/audio/bgm_menu.mp3';
-  const MENU = [(window.__preloaded && window.__preloaded[MENU_SRC]) || MENU_SRC];
-  const GAME = ['assets/audio/bgm_game1.mp3', 'assets/audio/bgm_game2.mp3', 'assets/audio/bgm_game3.mp3', 'assets/audio/bgm_game4.mp3'];
+  const MENU_SRC_URL = (window.A ? A(MENU_SRC) : MENU_SRC);   /* 与首屏加载器 __preloaded 的键一致（CDN 化后键为映射地址） */
+  const MENU = [(window.__preloaded && window.__preloaded[MENU_SRC_URL]) || MENU_SRC_URL];
+  const GAME = ['assets/audio/bgm_game1.mp3', 'assets/audio/bgm_game2.mp3', 'assets/audio/bgm_game3.mp3', 'assets/audio/bgm_game4.mp3'].map(function (s) { return window.A ? A(s) : s; });
   let audio = null;
   let mode = null;          // 'menu' | 'game' | null
   let idx = 0;

@@ -214,11 +214,13 @@ function aiChooseProps(p) {
     opps.forEach(q => { const v = aiInvValue(q, 'thief'); if (v > bestV) { bestV = v; best = q; } });
     if (best && bestV >= 8000) use('thief', best.idx);
   }
-  // 诬陷卡（用户追加）：押送净资产领先自己 ≥15% 的最强对手（未在押），拖慢领跑者节奏
+  // 诬陷卡（用户追加）：押送净资产领先自己 ≥15% 的最强对手，拖慢领跑者节奏
+  // 目标资格与人类侧 propPlayerFilter 同源：监狱/行政拘留/净化管控中一律不可选（避免二连罚与归因污染）
+  const frameable = q => !q.inJail && !q.detained && !(window.PSA && PSA.shouldSkip && PSA.shouldSkip(q.idx));
   if ((p.props.frame || 0) > 0) {
     const mine = netWorth(p);
     let best = null, bestW = -Infinity;
-    opps.forEach(q => { if (q.inJail) return; const w = netWorth(q); if (w > bestW) { bestW = w; best = q; } });
+    opps.forEach(q => { if (!frameable(q)) return; const w = netWorth(q); if (w > bestW) { bestW = w; best = q; } });
     if (best && bestW > mine * 1.15) use('frame', best.idx);
   }
   // 路障：放在自己高租金街区前 1 格

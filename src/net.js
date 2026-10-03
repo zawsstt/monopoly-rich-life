@@ -1,19 +1,19 @@
 /* ============================================================
- * NET —— 多人联机（PeerJS P2P · 房主权威）
+ * NET —— 多人联机（Supabase Realtime 信令 + WebRTC P2P · 房主权威）
  * 拓扑：房主运行完整游戏引擎；客人镜像渲染 + 发送操作
- * 信令：PeerJS 免费云（WebRTC DataChannel，GitHub Pages 静态托管可用）
+ * 信令：自家 Supabase 项目（supa-rtc.js，Broadcast 频道 room:CODE）
+ * 数据：WebRTC DataChannel（reliable/ordered），与原 PeerJS 方案等价
  * ============================================================ */
 'use strict';
 
 const NET = (() => {
-  const PREFIX = 'dfmon-v1-';
-  let peer = null;              // 本端 Peer
+  let peer = null;              // 兼容旧引用的空壳（PeerJS 已移除）
   let isHost = false;
   let active = false;
   let roomCode = '';
   let mySeat = -1;              // 客人自己的座位
-  const conns = new Map();      // seat -> DataConnection（房主用）
-  const seats = new Map();      // connId -> seat（房主用）
+  const conns = new Map();      // seat -> 连接适配对象（房主用）
+  const seats = new Map();      // 对端信令id -> seat（房主用）
   let hostConn = null;          // 客人用
   let myName = '玩家';
   const handlers = {};          // user_* 用户回调（NET.on 注册）
@@ -29,16 +29,36 @@ const NET = (() => {
   let askSeq = 1;
   let syncTimer = null;
 
-  function stage(t) { try { window.__netStage = t; } catch (e) { /* */ } }
-
-  function code5() {
-    const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    let s = '';
-    for (let i = 0; i < 5; i++) s += A[Math.floor(Math.random() * A.length)];
-    return s;
+  /* ---------- WebRTC 连接适配（原 PeerJS DataConnection 形状） ---------- */
+  const peers = new Map();      // 对端信令id -> { pc, dc, conn, pendingIce }（双端共用）
+  function makeConn(peerId, dc, pc) {
+    const conn = {
+      peer: peerId, open: false,
+      send(s) { try { if (dc.readyState === 'open') dc.send(s); } catch (e) { /* */ } },
+      close() { try { dc.close(); } catch (e) { /* */ } try { pc.close(); } catch (e) { /* */ } },
+      ondata: null, onclose: null,
+    };
+    dc.onopen = () => { conn.open = true; };
+    dc.onmessage = ev => { if (conn.ondata) conn.ondata(ev.data); };
+    dc.onclose = () => { conn.open = false; if (conn.onclose) conn.onclose(); };
+    dc.onerror = () => { /* onclose 随后必到，不重复触发 */ };
+    return conn;
+  }
+  function dropPeer(peerId) {
+    const st = peers.get(peerId);
+    if (!st) return;
+    peers.delete(peerId);
+    try { st.pc.close(); } catch (e) { /* */ }
+  }
+  async function applyIce(st, cand) {
+    try { if (st.pc.remoteDescription) await st.pc.addIceCandidate(cand); else (st.pendingIce = st.pendingIce || []).push(cand); } catch (e) { /* */ }
+  }
+  async function flushIce(st) {
+    const q = st.pendingIce || []; st.pendingIce = [];
+    for (const c of q) { try { await st.pc.addIceCandidate(c); } catch (e) { /* */ } }
   }
 
-  function emit(msg) { const h = handlers['user_' + msg.t]; if (h) h(msg); }
+  function stage(t) { try { window.__netStage = t; } catch (e) { /* */ } }
 
   /* 房主视角：对局是否进行中（G 由 game.js 提供；net.js 单独加载时安全退化） */
   function inGame() {
@@ -48,100 +68,138 @@ const NET = (() => {
   /* ---------- 房主 ---------- */
   function host(onReady, onFail) {
     isHost = true; active = true;
-    roomCode = code5();
-    peer = new Peer(PREFIX + roomCode);
-    peer.on('open', () => onReady(roomCode));
-    peer.on('error', e => { if (!peer.open) onFail && onFail(e.type); });
-    peer.on('connection', conn => {
-      conn.on('data', raw => {
-        let m; try { m = JSON.parse(raw); } catch (e) { return; }
-        m.seat = seats.get(conn.peer);
-        if (m.t === 'hello') {
-          let seat = -1, token = null, rejoin = false, charId = null;
-          /* 令牌重连只在对局进行中生效（座位仍属于该玩家）；大厅阶段令牌作废，按新客人重新入座，
-           * 避免旧令牌把「已离开又回来的人」塞回一个大厅列表里不存在的座位（开局时会被当成 AI） */
-          if (m.token && seatTokens.has(m.token)) {
-            if (inGame()) {
-              seat = seatTokens.get(m.token);
-              token = m.token;
-              rejoin = true;
-              disconnected.delete(seat);
-              if (dropTimers.has(seat)) { clearTimeout(dropTimers.get(seat)); dropTimers.delete(seat); }
-              const old = conns.get(seat);
-              if (old && old !== conn) { try { seats.delete(old.peer); old.close(); } catch (e) { /* */ } }
-              conns.set(seat, conn);
-              seats.set(conn.peer, seat);
-            } else {
-              seatTokens.delete(m.token);
-            }
-          }
-          if (seat < 0) {
-            const info = handlers.user_hello ? (handlers.user_hello(m, conn) || {}) : {};
-            seat = (typeof info === 'object') ? info.seat : info;
-            charId = (typeof info === 'object') ? info.charId : null;
-            if (seat >= 0) {
-              conns.set(seat, conn);
-              seats.set(conn.peer, seat);
-              /* 同座位旧令牌作废，只保留最新一枚 */
-              for (const [tk, s] of seatTokens) { if (s === seat) seatTokens.delete(tk); }
-              token = 'tk' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-              seatTokens.set(token, seat);
-            }
-          }
-          if (seat >= 0) {
-            send(conn, { t: 'welcome', seat, token, rejoin, charId, chatLog: chatLog.slice(-40) });
-            if (rejoin) {
-              const h = handlers.user_rejoin;
-              if (h) h(seat);
-              /* 重连者往往是刷新过的空白页：先下发完整开局快照重建棋盘，再补发断线期间挂起的决策 */
-              send(conn, { t: 'start', cfg: { maxRounds: G.maxRounds, theme: window.__boardTheme || 'classic' }, snap: snapshot(), rejoin: true });
-              const pend = pendingBySeat.get(seat);
-              if (pend) { for (const pm of pend) send(conn, pm); }
-            }
-          }
-          return;        }
-        if (m.t === 'reply') { resolveAsk(m.reqId, m.v); return; }
-        if (m.t === 'chat') {
-          chatLog.push(m);
-          if (chatLog.length > 50) chatLog.shift();
-          const h = handlers.user_chat;
-          if (h) h(m);
-          relay(m);
-          return;
+    const nc = window.__netCfg || {};
+    SUPA_RTC.hostRoom(nc.theme || window.__boardTheme || 'classic', nc.maxRounds || 0, nc.startMoney || 30000, code => {
+      roomCode = code;
+      onReady(code);
+    }, e => { stage('host-fail:' + (e && e.message)); onFail && onFail(String(e && e.message || e)); });
+    SUPA_RTC.on('sig', (m, from) => { hostSignal(m, from); });
+  }
+
+  /* 房主侧信令处理：hello → 建连；answer/ice → 补全 */
+  function hostSignal(m, from) {
+    if (m.t === 'hello') {
+      /* 同一信令 id 的旧连接（重连）先作废 */
+      if (peers.has(from)) dropPeer(from);
+      const pc = SUPA_RTC.makePeer();
+      const st = { pc, dc: null, conn: null, pendingIce: [] };
+      peers.set(from, st);
+      const dc = pc.createDataChannel('g', { ordered: true });
+      st.dc = dc;
+      st.conn = makeConn(from, dc, pc);
+      pc.onicecandidate = e => { if (e.candidate) SUPA_RTC.send({ to: from, t: 'ice', cand: e.candidate }); };
+      dc.onopen = () => onGuestConnection(st.conn);
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+          if (st.conn && st.conn.onclose) st.conn.onclose();
+          dropPeer(from);
         }
-        const h = handlers['user_' + m.t];
-        if (h) h(m);
-      });
-      conn.on('close', () => {
-        const seat = seats.get(conn.peer);
-        seats.delete(conn.peer);
-        if (seat == null) return;
-        if (conns.get(seat) !== conn) return;   /* 该座位已被同一玩家的新连接接管（重连），旧连接关闭不作数 */
-        conns.delete(seat);
-        if (inGame() && G.players[seat] && G.players[seat].alive && !G.players[seat].ai) {
-          /* 对局中的人类座位：进入断线宽限（不立刻交给 AI），决策请求挂起等其重连；
-           * 宽限到期仍未回来 → 交 AI 接管并立即放行所有挂起决策（否则整桌卡等 120s 超时）。
-           * 注：原版 handlers.leave 键名与 NET.on 写入的 user_leave 不一致，离席/断线逻辑从未生效 */
-          disconnected.add(seat);
-          const h = handlers.user_drop;
-          if (h) h(seat);
-          if (dropTimers.has(seat)) clearTimeout(dropTimers.get(seat));
-          dropTimers.set(seat, setTimeout(() => {
-            dropTimers.delete(seat);
-            if (!disconnected.has(seat)) return;
+      };
+      pc.createOffer().then(offer => pc.setLocalDescription(offer)).then(() => {
+        SUPA_RTC.send({ to: from, t: 'offer', sdp: pc.localDescription });
+      }).catch(e => { stage('offer-fail'); dropPeer(from); });
+      return;
+    }
+    const st = peers.get(from);
+    if (!st) return;
+    if (m.t === 'answer') {
+      st.pc.setRemoteDescription(m.sdp).then(() => flushIce(st)).catch(() => { /* */ });
+    } else if (m.t === 'ice') {
+      applyIce(st, m.cand);
+    }
+  }
+
+  /* 客人 DataChannel 打开 → 喂入原「peer.on('connection')」处理流程 */
+  function onGuestConnection(conn) {
+    conn.ondata = raw => {
+      let m; try { m = JSON.parse(raw); } catch (e) { return; }
+      m.seat = seats.get(conn.peer);
+      if (m.t === 'hello') {
+        let seat = -1, token = null, rejoin = false, charId = null;
+        /* 令牌重连只在对局进行中生效（座位仍属于该玩家）；大厅阶段令牌作废，按新客人重新入座，
+         * 避免旧令牌把「已离开又回来的人」塞回一个大厅列表里不存在的座位（开局时会被当成 AI） */
+        if (m.token && seatTokens.has(m.token)) {
+          if (inGame()) {
+            seat = seatTokens.get(m.token);
+            token = m.token;
+            rejoin = true;
             disconnected.delete(seat);
-            const pend = pendingBySeat.get(seat) || [];
-            pendingBySeat.delete(seat);
-            pend.forEach(pm => resolveAsk(pm.reqId, null));
-            const hl = handlers.user_leave;
-            if (hl) hl(seat);
-          }, GRACE_MS));
-        } else {
+            if (dropTimers.has(seat)) { clearTimeout(dropTimers.get(seat)); dropTimers.delete(seat); }
+            const old = conns.get(seat);
+            if (old && old !== conn) { try { seats.delete(old.peer); old.close(); } catch (e) { /* */ } }
+            conns.set(seat, conn);
+            seats.set(conn.peer, seat);
+          } else {
+            seatTokens.delete(m.token);
+          }
+        }
+        if (seat < 0) {
+          const info = handlers.user_hello ? (handlers.user_hello(m, conn) || {}) : {};
+          seat = (typeof info === 'object') ? info.seat : info;
+          charId = (typeof info === 'object') ? info.charId : null;
+          if (typeof seat !== 'number' || seat < 0 || seat > 3) seat = -1;   // 满员/非法座位硬拒：绝不让幽灵座位进房
+          if (seat >= 0) {
+            conns.set(seat, conn);
+            seats.set(conn.peer, seat);
+            /* 同座位旧令牌作废，只保留最新一枚 */
+            for (const [tk, s] of seatTokens) { if (s === seat) seatTokens.delete(tk); }
+            token = 'tk' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+            seatTokens.set(token, seat);
+          }
+        }
+        if (seat >= 0) {
+          send(conn, { t: 'welcome', seat, token, rejoin, charId, chatLog: chatLog.slice(-40) });
+          if (rejoin) {
+            const h = handlers.user_rejoin;
+            if (h) h(seat);
+            /* 重连者往往是刷新过的空白页：先下发完整开局快照重建棋盘，再补发断线期间挂起的决策 */
+            send(conn, { t: 'start', cfg: { maxRounds: G.maxRounds, theme: window.__boardTheme || 'classic' }, snap: snapshot(), rejoin: true });
+            const pend = pendingBySeat.get(seat);
+            if (pend) { for (const pm of pend) send(conn, pm); }
+          }
+        }
+        return;
+      }
+      if (m.t === 'reply') { resolveAsk(m.reqId, m.v); return; }
+      if (m.t === 'chat') {
+        chatLog.push(m);
+        if (chatLog.length > 50) chatLog.shift();
+        const h = handlers.user_chat;
+        if (h) h(m);
+        relay(m);
+        return;
+      }
+      const h = handlers['user_' + m.t];
+      if (h) h(m);
+    };
+    conn.onclose = () => {
+      const seat = seats.get(conn.peer);
+      seats.delete(conn.peer);
+      if (seat == null) return;
+      if (conns.get(seat) !== conn) return;   /* 该座位已被同一玩家的新连接接管（重连），旧连接关闭不作数 */
+      conns.delete(seat);
+      if (inGame() && G.players[seat] && G.players[seat].alive && !G.players[seat].ai) {
+        /* 对局中的人类座位：进入断线宽限（不立刻交给 AI），决策请求挂起等其重连；
+         * 宽限到期仍未回来 → 交 AI 接管并立即放行所有挂起决策（否则整桌卡等 120s 超时） */
+        disconnected.add(seat);
+        const h = handlers.user_drop;
+        if (h) h(seat);
+        if (dropTimers.has(seat)) clearTimeout(dropTimers.get(seat));
+        dropTimers.set(seat, setTimeout(() => {
+          dropTimers.delete(seat);
+          if (!disconnected.has(seat)) return;
+          disconnected.delete(seat);
+          const pend = pendingBySeat.get(seat) || [];
+          pendingBySeat.delete(seat);
+          pend.forEach(pm => resolveAsk(pm.reqId, null));
           const hl = handlers.user_leave;
           if (hl) hl(seat);
-        }
-      });
-    });
+        }, GRACE_MS));
+      } else {
+        const hl = handlers.user_leave;
+        if (hl) hl(seat);
+      }
+    };
   }
 
   /* ---------- 客人 ---------- */
@@ -155,60 +213,77 @@ const NET = (() => {
       attempt++;
       stage('create#' + attempt);
       if (onStage) try { onStage(attempt); } catch (e) { /* */ }
-      if (peer) { try { peer.destroy(); } catch (e) { /* */ } peer = null; }
-      peer = new Peer();
-      let opened = false;
-      peer.on('open', () => {
-        opened = true;
-        stage('peer-open#' + attempt);
-        GH = guestHandlers();
-        hostConn = peer.connect(PREFIX + roomCode, { reliable: true });
+      GH = guestHandlers();
+      /* 房间表入座 + 信令频道 join */
+      SUPA_RTC.joinRoom(roomCode, name, charId, seat => {
+        stage('room-joined#' + attempt);
+        SUPA_RTC.on('sig', (m, from) => guestSignal(m, from, onReady, onFail));
         clearTimeout(failTimer);
-        /* 递增超时 9s/16s/28s/28s：弱网（移动 NAT/VPN）与慢 ICE 下 8s 会误杀即将建立的连接 */
+        /* 递增超时 10s/16s/28s/28s：弱网（移动 NAT/VPN）与慢 ICE 下短超时会误杀即将建立的连接 */
         failTimer = setTimeout(() => {
           stage('conn-timeout#' + attempt);
-          if (attempt < 4) tryOnce();
+          if (attempt < 4) { SUPA_RTC.close(); setTimeout(tryOnce, 600); }
           else onFail && onFail('timeout');
-        }, attempt === 1 ? 9000 : attempt === 2 ? 16000 : 28000);
-        hostConn.on('open', () => {
-          stage('conn-open#' + attempt);
-          clearTimeout(failTimer);
-          send(hostConn, { t: 'hello', name, charId, token: (typeof window !== 'undefined' && window.__mpToken) || null });
-        });
-        hostConn.on('data', raw => {
-          let m; try { m = JSON.parse(raw); } catch (e) { return; }
-          try { window.__mpLastMsg = Date.now(); } catch (e2) { /* */ }
-          if (m.t === 'welcome') {
-            mySeat = m.seat;
-            try { window.__mpToken = m.token || window.__mpToken || null; } catch (e2) { /* */ }
-            onReady(m);
-            return;
-          }
-          if (m.t === 'ask') { handleAsk(m); return; }
-          const gh = GH && GH[m.t];
-          if (gh) { gh(m); return; }
-          const h = handlers['user_' + m.t];
-          if (h) h(m);
-        });
-        hostConn.on('close', () => { stage('conn-close'); handlers.user_kicked && handlers.user_kicked({}); });
-        hostConn.on('error', e => {
-          stage('conn-err#' + attempt + ':' + (e.type || e));
-          clearTimeout(failTimer);
-          if (attempt < 3) tryOnce();
-          else onFail && onFail('conn');
-        });
-      });
-      peer.on('disconnected', () => stage('signal-lost#' + attempt));
-      peer.on('error', e => {
-        stage('peer-err#' + attempt + ':' + (e.type || e));
-        if (!opened) {
-          clearTimeout(failTimer);
-          if (attempt < 3) setTimeout(tryOnce, 1000);
-          else onFail && onFail(e.type || 'peer-error');
-        }
+        }, attempt === 1 ? 10000 : attempt === 2 ? 16000 : 28000);
+        /* 广播 hello：房主收到后定向回 offer */
+        SUPA_RTC.send({ t: 'hello', name, charId, token: (typeof window !== 'undefined' && window.__mpToken) || null });
+      }, e => {
+        stage('join-fail#' + attempt + ':' + (e && e.message));
+        const msg = String(e && e.message || e);
+        if (attempt < 3 && msg !== 'room-full-or-missing') { setTimeout(tryOnce, 1000); }
+        else onFail && onFail(msg === 'room-full-or-missing' ? 'no-room' : msg);
       });
     };
     tryOnce();
+  }
+
+  /* 客人侧信令处理：offer → 应答；ice → 补全 */
+  function guestSignal(m, hostId, onReady, onFail) {
+    if (m.t === 'offer') {
+      /* 重连场景：旧连接先作废 */
+      if (peers.has(hostId)) dropPeer(hostId);
+      const pc = SUPA_RTC.makePeer();
+      const st = { pc, dc: null, conn: null, pendingIce: [] };
+      peers.set(hostId, st);
+      pc.onicecandidate = e => { if (e.candidate) SUPA_RTC.send({ to: hostId, t: 'ice', cand: e.candidate }); };
+      pc.ondatachannel = ev => {
+        st.dc = ev.channel;
+        st.conn = makeConn(hostId, st.dc, pc);
+        hostConn = st.conn;
+        st.conn.ondata = raw => {
+          let msg; try { msg = JSON.parse(raw); } catch (e) { return; }
+          try { window.__mpLastMsg = Date.now(); } catch (e2) { /* */ }
+          if (msg.t === 'welcome') {
+            mySeat = msg.seat;
+            try { window.__mpToken = msg.token || window.__mpToken || null; } catch (e2) { /* */ }
+            onReady(msg);
+            return;
+          }
+          if (msg.t === 'ask') { handleAsk(msg); return; }
+          const gh = GH && GH[msg.t];
+          if (gh) { gh(msg); return; }
+          const h = handlers['user_' + msg.t];
+          if (h) h(msg);
+        };
+        st.conn.onclose = () => { stage('conn-close'); handlers.user_kicked && handlers.user_kicked({}); };
+      };
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === 'failed') { stage('ice-failed'); dropPeer(hostId); }
+      };
+      pc.setRemoteDescription(m.sdp)
+        .then(() => pc.createAnswer())
+        .then(ans => pc.setLocalDescription(ans))
+        .then(() => {
+          stage('answered');
+          SUPA_RTC.send({ to: hostId, t: 'answer', sdp: pc.localDescription });
+          return flushIce(st);
+        })
+        .catch(e => { stage('answer-fail'); onFail && onFail('conn'); });
+      return;
+    }
+    const st = peers.get(hostId);
+    if (!st) return;
+    if (m.t === 'ice') applyIce(st, m.cand);
   }
 
   /* ---------- 收发 ---------- */
@@ -219,13 +294,18 @@ const NET = (() => {
   function relay(m) { for (const [, c] of conns) send(c, m); }
 
   /* ---------- 房主：镜像 ui 调用到客人 ---------- */
+  /* updatePlayers 不进 MIRROR_FNS：每次 moneyFloat 都触发它，双通道（即时 ui 广播 + 节流 sync）
+   * 会把客人端消息量放大数倍——面板状态统一走下方节流全量 sync */
   const MIRROR_FNS = ['log', 'toast', 'news', 'splash', 'moneyFloat', 'floatAt', 'flashTile',
-    'setActive', 'setPhase', 'updateHUD', 'updatePlayers', 'renderBlocks', 'rideStart', 'rideEnd', 'propFanfare'];
+    'setActive', 'setPhase', 'updateHUD', 'renderBlocks', 'rideStart', 'rideEnd', 'propFanfare'];
+  let mirrorOrig = null;   // 原始引用表：destroy 时还原，避免包装层跨局残留
   function installMirror() {
     if (ui.__netMirror === true) return;   /* 房主「再来一局」会再次开局：防止二次包裹造成每条消息双发 */
     ui.__netMirror = true;
+    mirrorOrig = {};
     MIRROR_FNS.forEach(fn => {
       const orig = ui[fn];
+      mirrorOrig[fn] = orig;
       ui[fn] = function (...args) {
         const r = orig.apply(ui, args);
         broadcast({ t: 'ui', fn, args: serializeArgs(fn, args) });
@@ -234,34 +314,46 @@ const NET = (() => {
     });
     // 格子状态
     const origUpdateTile = ui.updateTile;
+    mirrorOrig.updateTile = origUpdateTile;
     ui.updateTile = function (i) {
       origUpdateTile.call(ui, i);
       broadcast({ t: 'tile', idx: i, owner: G.tiles[i].owner, level: G.tiles[i].level });
     };
     // 棋子逐格移动
     const origMove = ui.moveToken;
+    mirrorOrig.moveToken = origMove;
     ui.moveToken = async function (p, animate, opts) {
       broadcast({ t: 'step', idx: p.idx, pos: p.pos, animate: !!animate });
       return origMove.call(ui, p, animate, opts);
     };
     // 骰子
     const origDice = ui.rollDice;
+    mirrorOrig.rollDice = origDice;
     ui.rollDice = async function (value) {
       broadcast({ t: 'dice', value });
       return origDice.call(ui, value);
     };
     // 卡牌过场（客人本地播放；客人自己的卡可确认）
     const origCard = ui.showCard;
+    mirrorOrig.showCard = origCard;
     ui.showCard = function (card, kind, player) {
       broadcast({ t: 'ui', fn: 'showCard', args: [card, kind, player.idx] });
       return origCard.call(ui, card, kind, player);
     };
     // 全量状态同步（节流）
     const origUpdPlayers = ui.updatePlayers;
+    mirrorOrig.updatePlayers = origUpdPlayers;
     ui.updatePlayers = function () {
       origUpdPlayers.call(ui);
       if (!syncTimer) syncTimer = setTimeout(() => { syncTimer = null; sendSync(); }, 120);
     };
+  }
+  function uninstallMirror() {
+    if (!mirrorOrig || !ui.__netMirror) return;
+    for (const fn in mirrorOrig) ui[fn] = mirrorOrig[fn];
+    ui.__netMirror = false;
+    mirrorOrig = null;
+    if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; }
   }
 
   function serializeArgs(fn, args) {
@@ -344,6 +436,7 @@ const NET = (() => {
     else if (m.kind === 'sell') pr = ui.sellModal(fake, m.need, m.list);
     else if (m.kind === 'shop') pr = ui.shopModal(fake, key => { toHost({ t: 'reply', reqId: m.reqId, v: { type: 'buy', key } }); return Promise.resolve(true); });
     else if (m.kind === 'number') pr = ui.numberPicker ? ui._numberPicker() : Promise.resolve(null);
+    else if (m.kind === 'custody') pr = (window.PSA && PSA.remoteCustody) ? PSA.remoteCustody().then(() => null) : Promise.resolve(null);   // 联机净化心灵：客人本地锁屏
     if (!pr) { toHost({ t: 'reply', reqId: m.reqId, v: null }); return; }
     pr.then(v => {
       if (m.kind === 'shop') { toHost({ t: 'reply', reqId: m.reqId, v: { type: 'close' } }); return; }
@@ -412,7 +505,7 @@ const NET = (() => {
       ui: m => applyUi(m.fn, m.args),
       chat: m => { const h = handlers.user_chat; if (h) h(m); },
       over: m => { const h = handlers.user_over; if (h) h(m); },
-      kicked: () => { const h = handlers.user_kicked; if (h) h(m); },
+      kicked: (m) => { const h = handlers.user_kicked; if (h) h(m); },
     };
   }
 
@@ -435,7 +528,10 @@ const NET = (() => {
   }
 
   function destroy() {
-    try { if (peer) peer.destroy(); } catch (e) { /* */ }
+    try { uninstallMirror(); } catch (e) { /* */ }
+    try { if (typeof SUPA_RTC !== 'undefined') SUPA_RTC.close(); } catch (e) { /* */ }
+    peers.forEach(st => { try { st.pc.close(); } catch (e) { /* */ } });
+    peers.clear();
     peer = null; active = false; isHost = false;
     conns.clear(); seats.clear(); hostConn = null; mySeat = -1;
     /* 房主重建房间 / 回菜单：清掉上局的重连凭证与宽限状态，避免旧令牌串入新房间 */

@@ -4,6 +4,9 @@
    ============================================================ */
 
 :root {
+  /* 背景素材地址：默认本地，[SB] 引导段在 CDN 开启时覆盖为 Supabase Storage 地址 */
+  --url-poster: url('../assets/img/scene_poster.jpg');
+  --url-rivals: url('../assets/img/rivals.svg');
   --felt1: #0f5138;
   --felt2: #073525;
   --felt3: #052419;
@@ -127,7 +130,7 @@ body.force-land {
 /* 海报作为舞台背景：压暗 + 降饱和 + 中心羽化，让金色 UI 成为主角，海报退为氛围 */
 #start-screen::before {
   content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
-  background: url('../assets/img/scene_poster.jpg') center 18% / cover no-repeat;
+  background: var(--url-poster) center 18% / cover no-repeat;
   opacity: .4; filter: saturate(.7) brightness(.8) contrast(1.05) blur(1.5px);
   -webkit-mask-image: radial-gradient(92% 78% at 50% 34%, #000 22%, rgba(0, 0, 0, .55) 58%, transparent 92%);
   mask-image: radial-gradient(92% 78% at 50% 34%, #000 22%, rgba(0, 0, 0, .55) 58%, transparent 92%);
@@ -168,7 +171,7 @@ body.force-land {
 
 /* ---- 角色卡：立绘出框 + 名牌 + 朱印选中 ---- */
 #char-grid {
-  display: grid; grid-template-columns: repeat(6, 172px);
+  display: grid; grid-template-columns: repeat(6, minmax(148px, 1fr));
   gap: 18px; margin: 0 0 .6vh; padding-top: 22px;
 }
 .char-card {
@@ -645,7 +648,7 @@ select option { background: #0d241b; color: #eee; }
   border-radius: 14px;
   background:
     linear-gradient(180deg, rgba(4, 26, 16, .18), rgba(3, 20, 11, .46)),
-    url('../assets/img/rivals.svg') center / cover no-repeat;
+    var(--url-rivals) center / cover no-repeat;
   box-shadow: inset 0 0 0 2px rgba(240, 180, 41, .3), inset 0 0 0 7px rgba(240, 180, 41, .1), inset 0 14px 40px rgba(0, 0, 0, .35);
   display: flex; flex-direction: row; align-items: center; justify-content: space-evenly;
   padding: 16px 30px;
@@ -2077,6 +2080,11 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 /* ---- ≤560px：竖屏手机 ---- */
 @media (max-width: 560px) {
   #hud-season { display: none !important; }
+  /* 顶栏窄窗防溢出：快报条让位（内容仍可看日志），控件轻度收紧，保住末尾按钮可点 */
+  #news-ticker { display: none; }
+  .tb-btn { padding: 7px 6px; font-size: 11px; }
+  .tb-ico { width: 34px; }
+  .tb-speed { min-width: 44px; }
   .rank-list { min-width: 0; }
   .rank-row { gap: 8px; padding: 8px 10px; font-size: 14px; }
   .rk-ava { width: 40px; flex-basis: 40px; height: 42px; }

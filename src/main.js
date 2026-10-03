@@ -8,7 +8,12 @@ const main = (() => {
   const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
 
   let boardTheme = 'classic';
-  try { if (localStorage.getItem('df_theme') === 'modern') boardTheme = 'modern'; } catch (e) { /* */ }
+  /* 主题来源优先级：URL 参数 > localStorage；?theme=modern 此前被 localStorage 覆盖失效 */
+  try {
+    const qp = new URLSearchParams(location.search).get('theme');
+    if (qp === 'modern' || qp === 'classic') { boardTheme = qp; localStorage.setItem('df_theme', qp); }
+    else if (localStorage.getItem('df_theme') === 'modern') boardTheme = 'modern';
+  } catch (e) { /* */ }
   let selectedChar = CHARACTERS[0].id;
   let aiCount = 3;
   let humanCount = 1;      // 同屏本地玩家数（1 = 单人 vs AI；2–4 = 同一台电脑轮流操作）
@@ -139,6 +144,10 @@ const main = (() => {
 
     lastConfig = cfg;
     window.__boardTheme = boardTheme;   /* 棋盘风格：modern 时地产消费 Props3DModern */
+    /* 中途切风格后开局：该主题模型未预载时先补齐（幂等；board-boot 遮罩正好盖住加载过程） */
+    if (window.__loadBoardTheme && ((boardTheme === 'modern' && !window.__modernReady) || (boardTheme === 'classic' && !window.__classicReady))) {
+      try { await window.__loadBoardTheme(boardTheme); } catch (e) { /* 补载失败：3D 走既有回退 */ }
+    }
     const { chars, humanChar, seats } = pickChars(cfg);
     $('#start-screen').classList.add('hidden');
     $('#game-screen').classList.remove('hidden');
@@ -327,8 +336,11 @@ const main = (() => {
       NET.sendSync();
     });
     NET.on('hello', (m, conn) => {
-      const seat = netState.guests.length + 1;
-      if (seat > 3) { conn.send(JSON.stringify({ t: 'welcome', seat: -1 })); return seat; }
+      /* 座位号回收复用：在 1..3 找未被占用的最小号，避免「先到先离后到者撞号顶连接」 */
+      const takenSeats = new Set(netState.guests.map(g => g.seat));
+      let seat = -1;
+      for (let s = 1; s <= 3; s++) { if (!takenSeats.has(s)) { seat = s; break; } }
+      if (seat < 0) { conn.send(JSON.stringify({ t: 'welcome', seat: -1 })); return { seat: -1 }; }
       const taken = new Set([selectedChar, ...netState.guests.map(g => g.charId)]);
       let cid = (m.charId && !taken.has(m.charId)) ? m.charId : CHARACTERS.find(c => !taken.has(c.id)).id;
       /* 昵称在此消毒一次：之后经 snapshot/pname 进入所有端的 log/toast/面板 innerHTML */
@@ -418,6 +430,8 @@ const main = (() => {
     const raw = sessionStorage.getItem('df_mp');
     if (!raw) { showReconnect('会话丢失，请返回主菜单重新加入', { final: true }); return; }
     const ses = JSON.parse(raw);
+    /* 刷新/被回收后 window.__mpToken 已丢：从会话存档回填，hello 才能带上重连凭证 */
+    if (ses.token && !window.__mpToken) window.__mpToken = ses.token;
     reconnecting = true;
     let attempts = 0;
     const tryOnce = () => {
@@ -492,7 +506,12 @@ const main = (() => {
     });
   }
   let guestInputWired = false;
-  function guestStart(m) {
+  async function guestStart(m) {
+    /* 房主主题与本机预载主题不一致时，先按清单动态补载该主题的模型（幂等） */
+    const th = (m.cfg && m.cfg.theme) || 'classic';
+    if (window.__loadBoardTheme && ((th === 'modern' && !window.__modernReady) || (th === 'classic' && !window.__classicReady))) {
+      try { await window.__loadBoardTheme(th); } catch (e) { /* 补载失败：3D 走既有回退 */ }
+    }
     try {
       const ses = JSON.parse(sessionStorage.getItem('df_mp') || 'null');
       if (ses && ses.name) window.__myName = ses.name;
@@ -534,11 +553,15 @@ const main = (() => {
     }
     wireChatInput();
   }
-  function launchNetMatch() {
+  async function launchNetMatch() {
     const guests = netState.guests.slice(0, 3);
     if (!guests.length) {
       $('.net-hint', $('#net-host-box')).textContent = '还没有玩家加入，请先分享房间码';
       return;
+    }
+    /* 玩家中途切换棋盘风格后开局：该主题模型可能没预载，动态补齐再开 */
+    if (window.__loadBoardTheme && ((boardTheme === 'modern' && !window.__modernReady) || (boardTheme === 'classic' && !window.__classicReady))) {
+      try { await window.__loadBoardTheme(boardTheme); } catch (e) { /* 补载失败：3D 走既有回退 */ }
     }
     const chars = [selectedChar];
     const seatsCfg = [{ idx: 0, ai: false, name: null }];
@@ -565,6 +588,7 @@ const main = (() => {
       seats: seatsCfg,
     });
     NET.installMirror();
+    if (window.SUPA_RTC) SUPA_RTC.setPlaying(true);   /* 房间状态 → playing（心跳上报） */
     NET.sendSync();
     NET.broadcast({ t: 'start', cfg: { maxRounds: lastConfig.maxRounds, theme: boardTheme }, snap: NET.snapshot() });
     NET.broadcast({ t: 'chat', from: '系统', seat: -1, text: '对局开始！祝各位发财！' });
@@ -604,6 +628,8 @@ const main = (() => {
     $('#net-join-cancel').addEventListener('click', closeLobby);
     $('#net-create').addEventListener('click', () => {
       SFX.unlock();
+      /* 房间配置（Supabase mp_rooms 表）：创建房间时随码写入 */
+      window.__netCfg = { theme: boardTheme, maxRounds: +$('#opt-rounds').value, startMoney: +$('#opt-money').value };
       $('#net-chooser').classList.add('hidden');
       $('#net-host-box').classList.remove('hidden');
       $('#net-code').textContent = '·····';
@@ -680,7 +706,8 @@ const main = (() => {
     };
     const apply = () => {
       const w = window.innerWidth || 0, h = window.innerHeight || 0;
-      const force = !!(w && h && h > w && Math.min(w, h) <= 820 && coarse());
+      /* 阈值 500：只拦手机竖屏；iPad/平板（短边 ≥768）本有竖屏空间，不再被强转 */
+      const force = !!(w && h && h > w && Math.min(w, h) <= 500 && coarse());
       if (force) { body.style.width = h + 'px'; body.style.height = w + 'px'; }
       else if (body.classList.contains('force-land')) { body.style.width = ''; body.style.height = ''; }
       body.classList.toggle('force-land', force);
@@ -693,6 +720,12 @@ const main = (() => {
     const schedule = () => { apply(); clearTimeout(timer); timer = setTimeout(apply, 120); };   /* 立即一次 + 旋转后尺寸稳定再一次 */
     window.addEventListener('resize', schedule);
     window.addEventListener('orientationchange', schedule);
+    /* 回前台全量刷新：后台标签 rAF 冻结会让 tweenCash 停在中间值、面板滞后于引擎 */
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && typeof ui !== 'undefined' && G && G.started && !G.over) {
+        try { ui.updatePlayers(); ui.updateHUD(); } catch (e) { /* */ }
+      }
+    });
     apply();
     let lockTried = false;
     window.addEventListener('pointerdown', () => {

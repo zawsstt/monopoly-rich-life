@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <title>大富翁 · 富贵人生</title>
 <link rel="icon" href="assets/img/ico_coin.png?v=46">
-<link rel="stylesheet" href="css/style.css?v=54">
+<link rel="stylesheet" href="css/style.css?v=55">
 <script>
 /* 最早的错误收集器：在任何游戏脚本之前挂载 */
 window.__errs = [];
@@ -17,11 +17,131 @@ window.addEventListener('unhandledrejection', function (e) {
   window.__errs.push('rej: ' + String(r).slice(0, 300));
 });
 </script>
+<script>
+/* ============================================================
+ * [SB] Supabase 资源与数据层引导 —— 先于一切游戏脚本执行
+ *  - 素材默认走 Supabase Storage CDN（公开桶 game-assets），仓库本地副本仅作回退
+ *  - A(path) 全局资源寻址：assets/** 与 gongyi_movie/** 映射为 CDN URL，其余原样
+ *  - ?cdn=0 强制本地；CDN 失败自动降级本地（sessionStorage 记忆，次日自动恢复）
+ *  - SB.rpc / SB.clientId 供排行榜与联机使用（REST，无需额外库）
+ * ============================================================ */
+window.SB = (function () {
+  var REF = 'rzzryotatqucfwtgjcaa';
+  var BASE = 'https://' + REF + '.supabase.co';
+  var KEY = 'sb_publishable_-Hn1HQlgTI7sT6TyzHb1Fw_lAlW30Km';
+  var CDN = BASE + '/storage/v1/object/public/game-assets/';
+  var q = null; try { q = new URLSearchParams(location.search); } catch (e) { /* */ }
+  var on = true;
+  try {
+    if (q && q.get('cdn') === '0') on = false;
+    else if (sessionStorage.getItem('df_cdn_down') === '1') on = false;
+    else if (localStorage.getItem('df_cdn') === '0') on = false;
+  } catch (e) { /* */ }
+  var cache = {};
+  function asset(p) {
+    if (!on || !p || typeof p !== 'string') return p;
+    if (p in cache) return cache[p];
+    var out = p;
+    if (!/^(https?:|data:|blob:)/.test(p) && /^(assets|gongyi_movie)\//.test(p.replace(/^\.\//, ''))) {
+      out = CDN + p.replace(/^\.\//, '');
+    }
+    cache[p] = out;
+    return out;
+  }
+  function degrade() {   /* CDN 不可用：本会话内全部回本地（包括尚未发起的请求） */
+    if (!on) return;
+    on = false; cache = {};
+    try { sessionStorage.setItem('df_cdn_down', '1'); } catch (e) { /* */ }
+  }
+  var cid = null;
+  function clientId() {  /* 匿名设备指纹（uuid v4，localStorage 持久） */
+    if (cid) return cid;
+    try { cid = localStorage.getItem('df_client_id'); } catch (e) { /* */ }
+    if (!cid || !/^[0-9a-f-]{36}$/.test(cid)) {
+      cid = (crypto.randomUUID && crypto.randomUUID()) ||
+        'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+          var r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+        });
+      try { localStorage.setItem('df_client_id', cid); } catch (e) { /* */ }
+    }
+    return cid;
+  }
+  function rpc(name, body) {   /* PostgREST RPC；失败静默（游戏离线可玩，云端仅增强） */
+    return fetch(BASE + '/rest/v1/rpc/' + name, {
+      method: 'POST',
+      headers: { apikey: KEY, authorization: 'Bearer ' + KEY, 'content-type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    }).then(function (r) {
+      if (!r.ok) throw new Error('rpc ' + name + ' HTTP ' + r.status);
+      var ct = r.headers.get('content-type') || '';
+      return ct.indexOf('json') >= 0 ? r.json() : null;
+    });
+  }
+  return {
+    url: BASE, key: KEY,
+    get cdn() { return on; },
+    asset: asset, degrade: degrade, clientId: clientId, rpc: rpc,
+  };
+})();
+window.A = SB.asset;
+
+/* 静态 <img data-src> 重写：插入即赋 CDN 地址，失败回落本地（一次性）。
+ * 只映射素材域；js/src 代码与页面同源加载，不经 CDN。 */
+(function () {
+  function ok(el) { el.dataset.cdnDone = '1'; }
+  function fail(el) {
+    if (el.dataset.cdnDone === '1') return;
+    el.dataset.cdnDone = '1';
+    if (el.getAttribute('src') !== el.dataset.src) el.src = el.dataset.src;   /* CDN 失败 → 本地副本 */
+  }
+  function wire(el) {
+    if (!el || el.dataset.src === undefined || el.dataset.cdnDone) return;
+    var p = el.dataset.src;
+    if (!/^(assets|gongyi_movie)\//.test(p)) { el.src = p; ok(el); return; }
+    el.onerror = function () { fail(el); el.onerror = null; };
+    el.src = SB.asset(p);
+    ok(el);
+  }
+  function scan(node) {
+    if (!node) return;
+    if (node.nodeType === 1) {
+      if (node.tagName === 'IMG') wire(node);
+      var imgs = node.querySelectorAll ? node.querySelectorAll('img[data-src]') : [];
+      for (var i = 0; i < imgs.length; i++) wire(imgs[i]);
+    }
+  }
+  new MutationObserver(function (muts) {
+    for (var i = 0; i < muts.length; i++) {
+      var m = muts[i];
+      for (var j = 0; j < m.addedNodes.length; j++) scan(m.addedNodes[j]);
+      if (m.type === 'attributes') wire(m.target);
+    }
+  }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-src'] });
+})();
+
+/* CSS 背景素材走 CDN：style.css 中 --url-* 变量默认本地，此处覆盖 */
+(function () {
+  if (!SB.cdn) return;
+  var st = document.documentElement.style;
+  st.setProperty('--url-poster', 'url("' + SB.asset('assets/img/scene_poster.jpg') + '")');
+  st.setProperty('--url-rivals', 'url("' + SB.asset('assets/img/rivals.svg') + '")');
+})();
+/* iOS Safari 忽略 user-scalable=no：document 级拦截双指捏合（gesturestart/change），
+ * 防止强制横屏舞台被捏走且无复位入口；单指行为不受影响 */
+['gesturestart', 'gesturechange'].forEach(function (ev) {
+  document.addEventListener(ev, function (e) { e.preventDefault(); }, { passive: false });
+});
+</script>
+<style>
+/* data-src 占位图：赋 src 前不渲染 alt 文本，赋值后淡入 */
+img[data-src]:not([src]) { opacity: 0; }
+img[data-src][src] { transition: opacity .35s ease; }
+</style>
 </head>
 <body>
 <div id="boot">
   <div class="boot-frame" aria-hidden="true"></div>
-  <img class="boot-logo" src="assets/img/logo_title.svg" alt="大富翁 · 富贵人生 WEB 版" draggable="false">
+  <img class="boot-logo" data-src="assets/img/logo_title.svg" alt="大富翁 · 富贵人生 WEB 版" draggable="false">
   <div class="boot-bar"><i id="boot-fill"></i></div>
   <div class="boot-tip" id="boot-tip">正在加载资源…</div>
 </div>
@@ -76,7 +196,7 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
 <div id="start-screen">
   <div class="ss-frame" aria-hidden="true"><i></i><i></i></div>
   <div class="hero">
-    <img class="hero-logo" src="assets/img/logo_title.svg" alt="大富翁 · 富贵人生 WEB 版" draggable="false">
+    <img class="hero-logo" data-src="assets/img/logo_title.svg" alt="大富翁 · 富贵人生 WEB 版" draggable="false">
   </div>
 
   <div class="ss-sect"><i></i><span>选 择 你 的 角 色</span><i></i></div>
@@ -101,18 +221,18 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
       </span>
     </div>
     <div class="opt-group"><b>初始资金</b>
+      <select id="opt-money">
+        <option value="20000">$20,000（紧张）</option>
+        <option value="30000" selected>$30,000（标准）</option>
+        <option value="50000">$50,000（富裕）</option>
+      </select>
+    </div>
     <div class="opt-group opt-seg" data-hint="地标建筑的风格主题；现代写实为 22 座中国地标四代演进">
       <b>棋盘风格</b>
       <span id="opt-board" class="seg">
         <button data-bt="classic" class="on" title="青砖灰瓦 · 古风棋盘"><em>经典古风</em></button>
         <button data-bt="modern" title="22 座中国地标 · 现代写实棋盘"><em>现代写实</em></button>
       </span>
-    </div>
-      <select id="opt-money">
-        <option value="20000">$20,000（紧张）</option>
-        <option value="30000" selected>$30,000（标准）</option>
-        <option value="50000">$50,000（富裕）</option>
-      </select>
     </div>
     <div class="opt-group"><b>回合上限</b>
       <select id="opt-rounds">
@@ -142,7 +262,7 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
   <div id="net-lobby" class="hidden">
     <div class="net-box" id="net-chooser">
       <div class="net-title">🌐 联机对战</div>
-      <div class="net-hint">基于 P2P 直连（WebRTC），无需服务器；创建房间后把房间码发给朋友即可。</div>
+      <div class="net-hint">WebRTC 直连对战：信令走自家 Supabase（supa-rtc），创建房间后把房间码发给朋友即可。</div>
       <div class="net-actions center">
         <button id="net-create" class="btn btn-primary">🏠 创建房间</button>
         <button id="net-join-open" class="btn btn-ghost">🔗 加入房间</button>
@@ -175,7 +295,7 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
 <!-- ========== 对局界面 ========== -->
 <div id="game-screen" class="hidden">
   <header id="topbar">
-    <div class="logo-mini"><img src="assets/img/logo_mini.svg" alt="大富翁 · 富贵人生" draggable="false"></div>
+    <div class="logo-mini"><img data-src="assets/img/logo_mini.svg" alt="大富翁 · 富贵人生" draggable="false"></div>
     <div class="hud-chips">
       <div id="hud-round">第 1 / 30 回合</div>
       <div id="hud-season" style="display:none"></div>
@@ -199,12 +319,12 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
   <div id="main">
     <div id="board-wrap">
       <div id="table-decor" aria-hidden="true">
-        <img src="assets/img/block.png" style="--x:3.5%;--y:14%;--r:-22deg;--s:.8">
-        <img src="assets/img/dice5.png" style="--x:95.5%;--y:10%;--r:16deg;--s:1">
-        <img src="assets/img/ico_coin.png" style="--x:96.5%;--y:80%;--r:24deg;--s:.9">
-        <img src="assets/img/ico_coin2.png" style="--x:2.5%;--y:84%;--r:-12deg;--s:.7">
-        <img src="assets/img/deck_destiny.png" style="--x:4.5%;--y:48%;--r:-28deg;--s:.55">
-        <img src="assets/img/dice2.png" style="--x:94.5%;--y:54%;--r:38deg;--s:.8">
+        <img data-src="assets/img/block.png" style="--x:3.5%;--y:14%;--r:-22deg;--s:.8">
+        <img data-src="assets/img/dice5.png" style="--x:95.5%;--y:10%;--r:16deg;--s:1">
+        <img data-src="assets/img/ico_coin.png" style="--x:96.5%;--y:80%;--r:24deg;--s:.9">
+        <img data-src="assets/img/ico_coin2.png" style="--x:2.5%;--y:84%;--r:-12deg;--s:.7">
+        <img data-src="assets/img/deck_destiny.png" style="--x:4.5%;--y:48%;--r:-28deg;--s:.55">
+        <img data-src="assets/img/dice2.png" style="--x:94.5%;--y:54%;--r:38deg;--s:.8">
       </div>
       <div id="board">
         <div id="board-center">
@@ -212,8 +332,8 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
           <div id="toasts"></div>
           <div id="splash"></div>
           <div class="bc-block bc-brand">
-            <div class="bc-logo"><img src="assets/img/logo_title.svg" alt="大富翁 · 富贵人生" draggable="false"></div>
-            <div class="pot-chip"><img src="assets/img/ico_coin.png" alt=""><div>奖池 <b id="pot-value">$0</b></div></div>
+            <div class="bc-logo"><img data-src="assets/img/logo_title.svg" alt="大富翁 · 富贵人生" draggable="false"></div>
+            <div class="pot-chip"><img data-src="assets/img/ico_coin.png" alt=""><div>奖池 <b id="pot-value">$0</b></div></div>
           </div>
           <div class="bc-block bc-action">
             <div id="center-status">准备开始…</div>
@@ -221,8 +341,8 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
             <button id="btn-roll"><span>掷 骰 子</span><small>按 空格键 也可以</small></button>
           </div>
           <div class="bc-block bc-decks">
-            <div class="deckstack ds-chance"><img src="assets/img/deck_chance.png" alt="机会"><span>机 会</span></div>
-            <div class="deckstack ds-destiny"><img src="assets/img/deck_destiny.png" alt="命运"><span>命 运</span></div>
+            <div class="deckstack ds-chance"><img data-src="assets/img/deck_chance.png" alt="机会"><span>机 会</span></div>
+            <div class="deckstack ds-destiny"><img data-src="assets/img/deck_destiny.png" alt="命运"><span>命 运</span></div>
           </div>
         </div>
         <div id="blocks"></div>
@@ -247,102 +367,102 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
 
 <!-- ===== 首屏加载器：脚本 / 首屏图片 / 主界面 BGM 由此统一预取（真实字节进度），全部就绪并执行完毕后才揭开加载遮罩。
      脚本标签为 type="text/plain" data-src，由下方加载器按文档顺序执行；data-size 为字节数（进度权重），由 tools_patch_boot_loader.py 生成。 ===== -->
-<script type="text/plain" data-src="js/lib/three.min.js?v=46" data-size="607784"></script>
-<script type="text/plain" data-src="js/lib/peerjs.min.js?v=46" data-size="92865"></script>
-<script type="text/plain" data-src="src/data.js?v=54" data-size="23722"></script>
-<script type="text/plain" data-src="src/sfx.js?v=52" data-size="9203"></script>
-<script type="text/plain" data-src="src/bgm.js?v=52" data-size="6046"></script>
-<script type="text/plain" data-src="src/ai.js?v=50" data-size="12389"></script>
-<script type="text/plain" data-src="src/game.js?v=54" data-size="65136"></script>
-<script type="text/plain" data-src="src/career.js?v=51" data-size="43455"></script>
-<script type="text/plain" data-src="src/uix.js?v=54" data-size="132359"></script>
-<script type="text/plain" data-src="src/net.js?v=54" data-size="20099"></script>
-<script type="text/plain" data-src="src/view3d.js?v=54" data-size="145931"></script>
-<script type="text/plain" data-src="src/buildings3d.js?v=46" data-size="93387"></script>
-<script type="text/plain" data-src="assets/models/props3d/prop_6.js?v=46" data-size="61031"></script>
-<script type="text/plain" data-src="assets/models/props3d/prop_3.js?v=46" data-size="51095"></script>
-<script type="text/plain" data-src="assets/models/props3d/prop_1.js?v=46" data-size="51550"></script>
-<script type="text/plain" data-src="assets/models/props3d/prop_8.js?v=46" data-size="63693"></script>
-<script type="text/plain" data-src="assets/models/props3d/prop_9.js?v=46" data-size="57437"></script>
-<script type="text/plain" data-src="assets/models/props3d/prop_13.js?v=46" data-size="57025"></script>
-<script type="text/plain" data-src="assets/models/props3d/prop_14.js?v=46" data-size="52917"></script>
-<script type="text/plain" data-src="assets/models/props3d/prop_10.js?v=46" data-size="55446"></script>
-<script type="text/plain" data-src="assets/models/props3d/prop_18.js?v=46" data-size="51718"></script>
-<script type="text/plain" data-src="assets/models/props3d/prop_16.js?v=46" data-size="54476"></script>
-<script type="text/plain" data-src="assets/models/props3d/prop_23.js?v=46" data-size="59867"></script>
-<script type="text/plain" data-src="assets/models/props3d/prop_19.js?v=46" data-size="55100"></script>
-<script type="text/plain" data-src="assets/models/props3d/prop_26.js?v=46" data-size="61490"></script>
-<script type="text/plain" data-src="assets/models/props3d/prop_24.js?v=46" data-size="62404"></script>
-<script type="text/plain" data-src="assets/models/props3d/prop_28.js?v=46" data-size="54619"></script>
-<script type="text/plain" data-src="assets/models/props3d/prop_21.js?v=46" data-size="56933"></script>
-<script type="text/plain" data-src="assets/models/props3d/prop_33.js?v=46" data-size="52826"></script>
-<script type="text/plain" data-src="assets/models/props3d/prop_30.js?v=46" data-size="52603"></script>
-<script type="text/plain" data-src="assets/models/props3d/prop_36.js?v=46" data-size="60889"></script>
-<script type="text/plain" data-src="assets/models/props3d/prop_34.js?v=46" data-size="62498"></script>
-<script type="text/plain" data-src="assets/models/props3d/prop_39.js?v=46" data-size="57044"></script>
-<script type="text/plain" data-src="assets/models/props3d/prop_38.js?v=46" data-size="60933"></script>
-<script type="text/plain" data-src="assets/models/specials3d/tile12_jail.js?v=46" data-size="36994"></script>
-<script type="text/plain" data-src="assets/models/specials3d/police_car.js?v=46" data-size="29333"></script>
-<script type="text/plain" data-src="assets/models/specials3d/tile15_station.js?v=46" data-size="58324"></script>
-<script type="text/plain" data-src="assets/models/specials3d/jet.js?v=46" data-size="30274"></script>
-<script type="text/plain" data-src="assets/models/specials3d/roadblock.js?v=46" data-size="22704"></script>
-<script type="text/plain" data-src="assets/models/specials3d/environment.js?v=48" data-size="74278"></script>
+<script type="text/plain" data-src="js/lib/three.min.js?v=46" data-size="607790"></script>
+<script type="text/plain" data-src="src/data.js?v=55" data-size="24573"></script>
+<script type="text/plain" data-src="src/sfx.js?v=53" data-size="9319"></script>
+<script type="text/plain" data-src="src/bgm.js?v=53" data-size="6362"></script>
+<script type="text/plain" data-src="src/ai.js?v=51" data-size="12635"></script>
+<script type="text/plain" data-src="src/game.js?v=55" data-size="65923"></script>
+<script type="text/plain" data-src="src/career.js?v=51" data-size="44045"></script>
+<script type="text/plain" data-src="src/uix.js?v=55" data-size="135982"></script>
+<script type="text/plain" data-src="src/supa-rtc.js?v=55" data-size="6536"></script>
+<script type="text/plain" data-src="src/net.js?v=56" data-size="24926"></script>
+<script type="text/plain" data-src="src/view3d.js?v=55" data-size="149113"></script>
+<script type="text/plain" data-src="src/buildings3d.js?v=46" data-size="95501"></script>
+<script type="text/plain" data-btheme="classic" data-src="assets/models/props3d/prop_6.js?v=46" data-size="62155"></script>
+<script type="text/plain" data-btheme="classic" data-src="assets/models/props3d/prop_3.js?v=46" data-size="51095"></script>
+<script type="text/plain" data-btheme="classic" data-src="assets/models/props3d/prop_1.js?v=46" data-size="52552"></script>
+<script type="text/plain" data-btheme="classic" data-src="assets/models/props3d/prop_8.js?v=46" data-size="64833"></script>
+<script type="text/plain" data-btheme="classic" data-src="assets/models/props3d/prop_9.js?v=46" data-size="58475"></script>
+<script type="text/plain" data-btheme="classic" data-src="assets/models/props3d/prop_13.js?v=46" data-size="58114"></script>
+<script type="text/plain" data-btheme="classic" data-src="assets/models/props3d/prop_14.js?v=46" data-size="53915"></script>
+<script type="text/plain" data-btheme="classic" data-src="assets/models/props3d/prop_10.js?v=46" data-size="56478"></script>
+<script type="text/plain" data-btheme="classic" data-src="assets/models/props3d/prop_18.js?v=46" data-size="52640"></script>
+<script type="text/plain" data-btheme="classic" data-src="assets/models/props3d/prop_16.js?v=46" data-size="55471"></script>
+<script type="text/plain" data-btheme="classic" data-src="assets/models/props3d/prop_23.js?v=46" data-size="60922"></script>
+<script type="text/plain" data-btheme="classic" data-src="assets/models/props3d/prop_19.js?v=46" data-size="56060"></script>
+<script type="text/plain" data-btheme="classic" data-src="assets/models/props3d/prop_26.js?v=46" data-size="62630"></script>
+<script type="text/plain" data-btheme="classic" data-src="assets/models/props3d/prop_24.js?v=46" data-size="63525"></script>
+<script type="text/plain" data-btheme="classic" data-src="assets/models/props3d/prop_28.js?v=46" data-size="54619"></script>
+<script type="text/plain" data-btheme="classic" data-src="assets/models/props3d/prop_21.js?v=46" data-size="56933"></script>
+<script type="text/plain" data-btheme="classic" data-src="assets/models/props3d/prop_33.js?v=46" data-size="53788"></script>
+<script type="text/plain" data-btheme="classic" data-src="assets/models/props3d/prop_30.js?v=46" data-size="53521"></script>
+<script type="text/plain" data-btheme="classic" data-src="assets/models/props3d/prop_36.js?v=46" data-size="62081"></script>
+<script type="text/plain" data-btheme="classic" data-src="assets/models/props3d/prop_34.js?v=46" data-size="63737"></script>
+<script type="text/plain" data-btheme="classic" data-src="assets/models/props3d/prop_39.js?v=46" data-size="58062"></script>
+<script type="text/plain" data-btheme="classic" data-src="assets/models/props3d/prop_38.js?v=46" data-size="60933"></script>
+<script type="text/plain" data-src="assets/models/specials3d/tile12_jail.js?v=46" data-size="37705"></script>
+<script type="text/plain" data-src="assets/models/specials3d/police_car.js?v=46" data-size="29932"></script>
+<script type="text/plain" data-src="assets/models/specials3d/tile15_station.js?v=46" data-size="59525"></script>
+<script type="text/plain" data-src="assets/models/specials3d/jet.js?v=46" data-size="30932"></script>
+<script type="text/plain" data-src="assets/models/specials3d/roadblock.js?v=46" data-size="23172"></script>
+<script type="text/plain" data-src="assets/models/specials3d/environment.js?v=48" data-size="75732"></script>
 <script type="text/plain" data-src="assets/models/specials3d/tile5_station.js?v=47" data-size="30104"></script>
 <script type="text/plain" data-src="assets/models/specials3d/tile25_harbor.js?v=47" data-size="29656"></script>
 <script type="text/plain" data-src="assets/models/specials3d/tile29_water.js?v=47" data-size="21650"></script>
-<script type="text/plain" data-src="assets/models/specials3d/tile11_power.js?v=47" data-size="21454"></script>
-<script type="text/plain" data-src="assets/models/specials3d/taxi.js?v=47" data-size="28538"></script>
-<script type="text/plain" data-src="assets/models/boards/modern/props3d/prop_1.js?v=54" data-size="73767"></script>
-<script type="text/plain" data-src="assets/models/boards/modern/props3d/prop_3.js?v=54" data-size="54685"></script>
-<script type="text/plain" data-src="assets/models/boards/modern/props3d/prop_6.js?v=55" data-size="24271"></script>
-<script type="text/plain" data-src="assets/models/boards/modern/props3d/prop_8.js?v=54" data-size="36010"></script>
-<script type="text/plain" data-src="assets/models/boards/modern/props3d/prop_9.js?v=54" data-size="24760"></script>
-<script type="text/plain" data-src="assets/models/boards/modern/props3d/prop_10.js?v=54" data-size="26251"></script>
-<script type="text/plain" data-src="assets/models/boards/modern/props3d/prop_13.js?v=54" data-size="25852"></script>
-<script type="text/plain" data-src="assets/models/boards/modern/props3d/prop_14.js?v=54" data-size="23905"></script>
-<script type="text/plain" data-src="assets/models/boards/modern/props3d/prop_16.js?v=54" data-size="32741"></script>
-<script type="text/plain" data-src="assets/models/boards/modern/props3d/prop_18.js?v=54" data-size="28769"></script>
-<script type="text/plain" data-src="assets/models/boards/modern/props3d/prop_19.js?v=57" data-size="42405"></script>
-<script type="text/plain" data-src="assets/models/boards/modern/props3d/prop_21.js?v=54" data-size="32383"></script>
-<script type="text/plain" data-src="assets/models/boards/modern/props3d/prop_23.js?v=56" data-size="33172"></script>
-<script type="text/plain" data-src="assets/models/boards/modern/props3d/prop_24.js?v=56" data-size="35815"></script>
-<script type="text/plain" data-src="assets/models/boards/modern/props3d/prop_26.js?v=56" data-size="33783"></script>
-<script type="text/plain" data-src="assets/models/boards/modern/props3d/prop_28.js?v=56" data-size="33328"></script>
-<script type="text/plain" data-src="assets/models/boards/modern/props3d/prop_30.js?v=56" data-size="30938"></script>
-<script type="text/plain" data-src="assets/models/boards/modern/props3d/prop_33.js?v=59" data-size="42981"></script>
-<script type="text/plain" data-src="assets/models/boards/modern/props3d/prop_34.js?v=57" data-size="29454"></script>
-<script type="text/plain" data-src="assets/models/boards/modern/props3d/prop_36.js?v=64" data-size="48177"></script>
-<script type="text/plain" data-src="assets/models/boards/modern/props3d/prop_38.js?v=63" data-size="36328"></script>
-<script type="text/plain" data-src="assets/models/boards/modern/props3d/prop_39.js?v=61" data-size="46491"></script>
-<script type="text/plain" data-src="assets/models/boards/modern/specials3d/tile5_station.js?v=58" data-size="44549"></script>
-<script type="text/plain" data-src="assets/models/boards/modern/specials3d/tile15_hsr_station.js?v=60" data-size="48541"></script>
-<script type="text/plain" data-src="assets/models/boards/modern/specials3d/tile25_ferry_harbor.js?v=1" data-size="43154"></script>
-<script type="text/plain" data-src="assets/models/boards/modern/specials3d/tile37_airport.js?v=62" data-size="58282"></script>
-<script type="text/plain" data-src="assets/models/boards/modern/specials3d/tile22_shop.js?v=65" data-size="47431"></script>
-<script type="text/plain" data-src="assets/models/boards/modern/specials3d/tile32_gate.js?v=65" data-size="49062"></script>
+<script type="text/plain" data-src="assets/models/specials3d/tile11_power.js?v=47" data-size="21851"></script>
+<script type="text/plain" data-src="assets/models/specials3d/taxi.js?v=47" data-size="29003"></script>
+<script type="text/plain" data-btheme="modern" data-src="assets/models/boards/modern/props3d/prop_1.js?v=54" data-size="75162"></script>
+<script type="text/plain" data-btheme="modern" data-src="assets/models/boards/modern/props3d/prop_3.js?v=54" data-size="55745"></script>
+<script type="text/plain" data-btheme="modern" data-src="assets/models/boards/modern/props3d/prop_6.js?v=55" data-size="24454"></script>
+<script type="text/plain" data-btheme="modern" data-src="assets/models/boards/modern/props3d/prop_8.js?v=54" data-size="36332"></script>
+<script type="text/plain" data-btheme="modern" data-src="assets/models/boards/modern/props3d/prop_9.js?v=54" data-size="24957"></script>
+<script type="text/plain" data-btheme="modern" data-src="assets/models/boards/modern/props3d/prop_10.js?v=54" data-size="26422"></script>
+<script type="text/plain" data-btheme="modern" data-src="assets/models/boards/modern/props3d/prop_13.js?v=54" data-size="26052"></script>
+<script type="text/plain" data-btheme="modern" data-src="assets/models/boards/modern/props3d/prop_14.js?v=54" data-size="24107"></script>
+<script type="text/plain" data-btheme="modern" data-src="assets/models/boards/modern/props3d/prop_16.js?v=54" data-size="33121"></script>
+<script type="text/plain" data-btheme="modern" data-src="assets/models/boards/modern/props3d/prop_18.js?v=54" data-size="29063"></script>
+<script type="text/plain" data-btheme="modern" data-src="assets/models/boards/modern/props3d/prop_19.js?v=57" data-size="42799"></script>
+<script type="text/plain" data-btheme="modern" data-src="assets/models/boards/modern/props3d/prop_21.js?v=54" data-size="32667"></script>
+<script type="text/plain" data-btheme="modern" data-src="assets/models/boards/modern/props3d/prop_23.js?v=56" data-size="33521"></script>
+<script type="text/plain" data-btheme="modern" data-src="assets/models/boards/modern/props3d/prop_24.js?v=56" data-size="36142"></script>
+<script type="text/plain" data-btheme="modern" data-src="assets/models/boards/modern/props3d/prop_26.js?v=56" data-size="34158"></script>
+<script type="text/plain" data-btheme="modern" data-src="assets/models/boards/modern/props3d/prop_28.js?v=56" data-size="33630"></script>
+<script type="text/plain" data-btheme="modern" data-src="assets/models/boards/modern/props3d/prop_30.js?v=56" data-size="31293"></script>
+<script type="text/plain" data-btheme="modern" data-src="assets/models/boards/modern/props3d/prop_33.js?v=59" data-size="43329"></script>
+<script type="text/plain" data-btheme="modern" data-src="assets/models/boards/modern/props3d/prop_34.js?v=57" data-size="29729"></script>
+<script type="text/plain" data-btheme="modern" data-src="assets/models/boards/modern/props3d/prop_36.js?v=64" data-size="48519"></script>
+<script type="text/plain" data-btheme="modern" data-src="assets/models/boards/modern/props3d/prop_38.js?v=63" data-size="36676"></script>
+<script type="text/plain" data-btheme="modern" data-src="assets/models/boards/modern/props3d/prop_39.js?v=61" data-size="46820"></script>
+<script type="text/plain" data-btheme="modern" data-src="assets/models/boards/modern/specials3d/tile5_station.js?v=58" data-size="45296"></script>
+<script type="text/plain" data-btheme="modern" data-src="assets/models/boards/modern/specials3d/tile15_hsr_station.js?v=60" data-size="48541"></script>
+<script type="text/plain" data-btheme="modern" data-src="assets/models/boards/modern/specials3d/tile25_ferry_harbor.js?v=1" data-size="43900"></script>
+<script type="text/plain" data-btheme="modern" data-src="assets/models/boards/modern/specials3d/tile37_airport.js?v=62" data-size="59169"></script>
+<script type="text/plain" data-btheme="modern" data-src="assets/models/boards/modern/specials3d/tile22_shop.js?v=65" data-size="47431"></script>
+<script type="text/plain" data-btheme="modern" data-src="assets/models/boards/modern/specials3d/tile32_gate.js?v=65" data-size="49821"></script>
 <script type="text/plain" data-src="assets/models/specials3d/tile37_airport.js?v=47" data-size="24108"></script>
-<script type="text/plain" data-src="assets/models/chars3d/boss.js?v=48" data-size="42766"></script>
-<script type="text/plain" data-src="assets/models/chars3d/qian.js?v=46" data-size="36621"></script>
-<script type="text/plain" data-src="assets/models/chars3d/tang.js?v=48" data-size="35534"></script>
-<script type="text/plain" data-src="assets/models/chars3d/tu.js?v=48" data-size="44941"></script>
-<script type="text/plain" data-src="assets/models/chars3d/ren.js?v=48" data-size="34552"></script>
-<script type="text/plain" data-src="assets/models/chars3d/doudou.js?v=48" data-size="42064"></script>
+<script type="text/plain" data-src="assets/models/chars3d/boss.js?v=48" data-size="43434"></script>
+<script type="text/plain" data-src="assets/models/chars3d/qian.js?v=46" data-size="37358"></script>
+<script type="text/plain" data-src="assets/models/chars3d/tang.js?v=48" data-size="36123"></script>
+<script type="text/plain" data-src="assets/models/chars3d/tu.js?v=48" data-size="45645"></script>
+<script type="text/plain" data-src="assets/models/chars3d/ren.js?v=48" data-size="35064"></script>
+<script type="text/plain" data-src="assets/models/chars3d/doudou.js?v=48" data-size="42788"></script>
 <script type="text/plain" data-src="assets/models/propFactories.js?v=46" data-size="12077"></script>
-<script type="text/plain" data-src="src/main.js?v=54" data-size="38186"></script>
-<script type="text/plain" data-src="src/psa.js?v=54" data-size="33710"></script>
+<script type="text/plain" data-src="src/main.js?v=55" data-size="40893"></script>
+<script type="text/plain" data-src="src/psa.js?v=55" data-size="35828"></script>
 <script type="text/plain" data-kind="img" data-src="assets/img/scene_poster.jpg" data-size="472131"></script>
-<script type="text/plain" data-kind="img" data-src="assets/img/face3_boss.png?v=40" data-size="-1"></script>
-<script type="text/plain" data-kind="img" data-src="assets/img/face3_doudou.png?v=40" data-size="-1"></script>
-<script type="text/plain" data-kind="img" data-src="assets/img/face3_qian.png?v=40" data-size="-1"></script>
-<script type="text/plain" data-kind="img" data-src="assets/img/face3_ren.png?v=40" data-size="-1"></script>
-<script type="text/plain" data-kind="img" data-src="assets/img/face3_tang.png?v=40" data-size="-1"></script>
-<script type="text/plain" data-kind="img" data-src="assets/img/face3_tu.png?v=40" data-size="-1"></script>
-<script type="text/plain" data-kind="img" data-src="assets/img/full3_boss.png?v=40" data-size="-1"></script>
-<script type="text/plain" data-kind="img" data-src="assets/img/full3_doudou.png?v=40" data-size="-1"></script>
-<script type="text/plain" data-kind="img" data-src="assets/img/full3_qian.png?v=40" data-size="-1"></script>
-<script type="text/plain" data-kind="img" data-src="assets/img/full3_ren.png?v=40" data-size="-1"></script>
-<script type="text/plain" data-kind="img" data-src="assets/img/full3_tang.png?v=40" data-size="-1"></script>
-<script type="text/plain" data-kind="img" data-src="assets/img/full3_tu.png?v=40" data-size="-1"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/face3_boss.png?v=40" data-size="106990"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/face3_doudou.png?v=40" data-size="99992"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/face3_qian.png?v=40" data-size="92505"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/face3_ren.png?v=40" data-size="98098"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/face3_tang.png?v=40" data-size="117552"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/face3_tu.png?v=40" data-size="126252"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/full3_boss.png?v=40" data-size="424407"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/full3_doudou.png?v=40" data-size="390875"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/full3_qian.png?v=40" data-size="229319"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/full3_ren.png?v=40" data-size="256247"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/full3_tang.png?v=40" data-size="406436"></script>
+<script type="text/plain" data-kind="img" data-src="assets/img/full3_tu.png?v=40" data-size="510075"></script>
 <script type="text/plain" data-kind="img" data-src="assets/img/pose_boss_cheer.png" data-size="12733"></script>
 <script type="text/plain" data-kind="img" data-src="assets/img/pose_boss_hit.png" data-size="16300"></script>
 <script type="text/plain" data-kind="img" data-src="assets/img/pose_doudou_cheer.png" data-size="14398"></script>
@@ -361,11 +481,47 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
   'use strict';
   var els = document.querySelectorAll('script[data-src]');
   var items = [];
+  /* 主题化模型按需载：data-btheme 标记的声明仅当与当前主题一致时预载，否则进懒加载清单
+   * （省 ~3.5MB 首开流量；联机客人若房主换了主题，开局前由 __loadBoardTheme 动态补载） */
+  var curTheme = 'classic';
+  try {
+    var qp = new URLSearchParams(location.search).get('theme');
+    curTheme = (qp === 'modern' || qp === 'classic') ? qp : (localStorage.getItem('df_theme') || 'classic');
+  } catch (e) { /* */ }
+  window.__lazyThemeManifest = [];
   for (var i = 0; i < els.length; i++) {
     var el = els[i];
-    items.push({ url: el.getAttribute('data-src'), kind: el.getAttribute('data-kind') || 'js', size: +el.getAttribute('data-size') || 0,
+    var raw = el.getAttribute('data-src');
+    var bt = el.getAttribute('data-btheme');
+    if (bt && bt !== curTheme) {
+      window.__lazyThemeManifest.push({ src: raw, btheme: bt });
+      continue;
+    }
+    if (bt === curTheme && bt === 'classic') window.__classicReady = true;
+    if (bt === curTheme && bt === 'modern') window.__modernReady = true;
+    items.push({ url: (window.SB && SB.asset) ? SB.asset(raw) : raw, local: raw, kind: el.getAttribute('data-kind') || 'js', size: +el.getAttribute('data-size') || 0,
       loaded: 0, done: false, failed: false, text: null, blob: null });
   }
+  /* 动态补载另一主题的模型（幂等；按清单顺序执行保证注册次序） */
+  window.__loadBoardTheme = function (theme) {
+    if (theme !== 'modern' && theme !== 'classic') return Promise.resolve();
+    if ((theme === 'modern' && window.__modernReady) || (theme === 'classic' && window.__classicReady)) return Promise.resolve();
+    var list = window.__lazyThemeManifest.filter(function (x) { return x.btheme === theme; });
+    return list.reduce(function (chain, x) {
+      return chain.then(function () {
+        return fetch((window.SB && SB.asset) ? SB.asset(x.src) : x.src).then(function (r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.text();
+        }).catch(function () { return fetch(x.src).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); }); });
+      }).then(function (code) {
+        var s = document.createElement('script');
+        s.text = code + '\n//# sourceURL=' + x.src;
+        document.head.appendChild(s);
+      });
+    }, Promise.resolve()).then(function () {
+      if (theme === 'modern') window.__modernReady = true; else window.__classicReady = true;
+    });
+  };
   var fill = document.getElementById('boot-fill'), tip = document.getElementById('boot-tip');
   var totalBytes = 0; items.forEach(function (it) { totalBytes += it.size; });
   var painted = -1, raf = 0, CAP = 92;   /* 92% 之后留给脚本执行与首帧排版 */
@@ -400,7 +556,7 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
         pump();
       });
     });
-    return withTimeout(p, 90000, function () { if (ctrl) ctrl.abort(); });
+    return withTimeout(p, it.__final ? 90000 : 20000, function () { if (ctrl) ctrl.abort(); });
   }
   /* 图片走渲染器自身的图片缓存（与 CSS 背景 / <img> 共用一份请求），load 后再 decode 保证上屏零解码卡顿 */
   function loadImage(it) {
@@ -415,7 +571,17 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
       }, 12000);
       var im = new Image();
       im.onload = function () { if (im.decode) im.decode().then(finish, finish); else finish(); };
-      im.onerror = function () { it.failed = true; finish(); };
+      im.onerror = function () {
+        /* CDN 图片失败 → 本地副本重试一次；仍失败才标记失败 */
+        if (it.url !== it.local && !it.__imgRetry) {
+          it.__imgRetry = true;
+          if (window.SB) SB.degrade();
+          it.url = it.local;
+          im.src = it.local;
+          return;
+        }
+        it.failed = true; finish();
+      };
       im.src = it.url;
     });
   }
@@ -426,7 +592,14 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
       if (!it.size) { it.size = ab.byteLength; totalBytes += it.size; }
     });
     return p.then(function () { it.done = true; it.loaded = it.size; schedule(); }, function (e) {
-      if (attempt < 1) { it.loaded = 0; return loadItem(it, attempt + 1); }
+      if (attempt < 1) {
+        /* 第一次失败：若走的是 CDN 则整会话降级本地（后续资源直接走本地，不再逐个撞墙）；否则简单重试 */
+        it.loaded = 0;
+        if (it.url !== it.local && window.SB) SB.degrade();
+        if (it.url !== it.local) it.url = it.local;
+        it.__final = true;   /* 本地最后一搏：超时放宽到 90s */
+        return loadItem(it, attempt + 1);
+      }
       it.failed = true; it.done = true; schedule();
       console.warn('[boot] 资源预取失败，回退常规加载：', it.url, e && e.message);
     });
@@ -457,7 +630,7 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
           return;
         }
         return new Promise(function (resolve) {
-          var s = document.createElement('script'); s.src = it.url; s.async = false;
+          var s = document.createElement('script'); s.src = it.local; s.async = false;   /* 预取失败回退 <script src>：一律本地（同源最稳） */
           s.onload = s.onerror = function () { resolve(); };
           document.head.appendChild(s);
         });
@@ -481,6 +654,23 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
     return new Promise(function (r) { setTimeout(function () { setTimeout(r, 60); }, 60); });
   }).then(function () {
     if (fill) fill.style.width = '100%';
+    /* 关键脚本（js 类）预取失败 → 不再静默揭幕：给出红字与重试按钮（弱网下玩家能自救） */
+    var failedJs = items.filter(function (it) { return it.failed && it.kind === 'js'; });
+    if (failedJs.length) {
+      setTip('部分核心资源加载失败（' + failedJs.length + ' 个）');
+      try { console.warn('[boot] 失败清单:', failedJs.map(function (it) { return it.local; }).join(', ')); } catch (e) { /* */ }
+      var bar = document.querySelector('#boot .boot-bar');
+      if (bar) {
+        var btn = document.createElement('button');
+        btn.textContent = '重新加载';
+        btn.className = 'btn btn-mini btn-primary';
+        btn.style.cssText = 'margin-left:10px;vertical-align:middle;padding:6px 14px;border-radius:99px;background:#f0a429;color:#1c2a22;font:700 12px Microsoft YaHei;border:none;cursor:pointer';
+        btn.onclick = function () { location.reload(); };
+        bar.parentNode.insertBefore(btn, bar.nextSibling);
+        if (fill) { fill.style.background = '#e2543f'; fill.style.boxShadow = '0 0 14px rgba(226,84,63,.6)'; }
+      }
+      return;   /* 失败时不揭幕：用户点重试，而不是拿到残缺页面 */
+    }
     setTip('加载完成！');
     window.__bootMs = Math.round(performance.now() - window.__bootStart);
     var b = document.getElementById('boot');

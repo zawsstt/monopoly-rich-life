@@ -1,0 +1,5 @@
+# 本地开发/冒烟产物
+_smoke_*
+_audit_report.md
+node_modules/
+*.log

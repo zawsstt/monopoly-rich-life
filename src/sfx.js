@@ -34,9 +34,10 @@ const SFX = (() => {
       chips: 'assets/sfx/chipsCollide1.ogg',
       chips2: 'assets/sfx/chipsCollide2.ogg',
     };
-    for (const [k, url] of Object.entries(files)) {
+    for (const [k, path] of Object.entries(files)) {
       try {
-        const res = await fetch(url);
+        let res = await fetch(window.A ? A(path) : path);
+        if (!res.ok && window.A) res = await fetch(path);   /* CDN 失败 → 本地副本 */
         if (!res.ok) continue;
         buffers[k] = await c.decodeAudioData(await res.arrayBuffer());
       } catch (e) { /* file:// 下静默失败，合成音兜底 */ }

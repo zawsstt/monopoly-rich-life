@@ -349,7 +349,7 @@ const ui = (() => {
       el.classList.add('owned');
       el.style.setProperty('--oc', c.color);
       if (bld && t.type === 'prop' && st.level > 0) {
-        bld.innerHTML = `<img src="assets/img/b_${c.id}_${st.level}.png" alt=""><span class="lv">${st.level >= CFG.MAX_LEVEL ? 'MAX' : 'Lv' + st.level}</span>`;
+        bld.innerHTML = `<img src="${window.A ? A(`assets/img/b_${c.id}_${st.level}.png`) : `assets/img/b_${c.id}_${st.level}.png`}" alt=""><span class="lv">${st.level >= CFG.MAX_LEVEL ? 'MAX' : 'Lv' + st.level}</span>`;
       }
     }
   }
@@ -363,7 +363,7 @@ const ui = (() => {
     for (const k in G.blocks) {
       const idx = +k;
       const d = document.createElement('img');
-      d.src = 'assets/img/block.png';
+      d.src = window.A ? A('assets/img/block.png') : 'assets/img/block.png';
       d.className = 'blockchip';
       d.style.transform = `translate(${RECTS[idx].x}px, ${RECTS[idx].y}px)`;
       d.title = '路障';
@@ -1101,7 +1101,7 @@ const ui = (() => {
       for (let n = 1; n <= 6; n++) {
         const b = document.createElement('button');
         b.className = 'dp-btn';
-        b.innerHTML = `<img src="assets/img/dice${n}.png" alt="${n}">`;
+        b.innerHTML = `<img src="${window.A ? A(`assets/img/dice${n}.png`) : `assets/img/dice${n}.png`}" alt="${n}">`;
         b.onclick = () => { m.close(); res(n); };
         row.appendChild(b);
       }
@@ -1193,7 +1193,7 @@ const ui = (() => {
       case 'start': return `每次经过领取工资 ${fmt(CFG.SALARY)}。`;
       case 'jail': return '探视时间，进来的都是客人（除了蹲着的那位）。';
       case 'park': return '中央公园：落到这里抱走全部奖池！税收与罚款都会汇入奖池。';
-      case 'gotojail': return '直接入狱，不得领取工资。可交保释金 $2,000 或用出狱许可证脱身。';
+      case 'gotojail': return '行政拘留 1 回合并处 $500~$1,500 罚款，不可保释、不进监狱（区别于诬陷入狱）。';
       case 'chance': return '机会：抽一张机会卡，好坏参半。';
       case 'destiny': return '命运：一张新闻卡，往往牵动全场。';
       case 'tax': return t.taxKind === 'income' ? '所得税：缴纳现金的 10%（$2,000 起）进入奖池。' : '奢侈税：按总资产的 3% 缴纳，进入奖池。';
@@ -1765,7 +1765,7 @@ html.stage-short #ah-rps{font-size:12px}
           const t = BOARD[it.idx];
           const market = t.type === 'prop' ? t.price + st.level * t.buildCost : t.price;
           const auctionable = it.kind === 'land' &&
-            alivePlayers().some(q => q.idx !== p.idx && q.money >= market * CFG.AUCTION_START);
+            alivePlayers().some(q => q.idx !== p.idx && q.money >= Math.round(market * CFG.AUCTION_START / 100) * 100);
           return `<div class="sell-item">
               <div class="si-main"><span>${it.label}</span><small>市值约 ${fmt(market)} · 半价变现 ${fmt(it.refund)}</small></div>
               <b>+${fmt(it.refund)}</b>
@@ -1802,6 +1802,7 @@ html.stage-short #ah-rps{font-size:12px}
   function loadRecords() {
     try { return JSON.parse(localStorage.getItem('df_records_v1') || '[]'); } catch (e) { return []; }
   }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
   function saveRecords(rs) {
     try { localStorage.setItem('df_records_v1', JSON.stringify(rs.slice(0, 200))); } catch (e) { /* ignore */ }
   }
@@ -1826,18 +1827,48 @@ html.stage-short #ah-rps{font-size:12px}
         if (typeof CAREER !== 'undefined' && p.idx === CAREER.localSeat()) { const eq = CAREER.equipped(); rec.title = eq ? eq.id : ''; }
       });
       saveRecords(rs);
+      /* 云端上报（Supabase）：只上本机座位，避免同屏多人串到同一设备档案 */
+      if (window.SB) {
+        const seat = (typeof CAREER !== 'undefined' && CAREER.localSeat) ? CAREER.localSeat() : 0;
+        const mine = ranking.find(p => p.idx === seat && !p.ai);
+        if (mine) {
+          const st = (G.stats && G.stats[mine.idx]) || { rentGot: 0, jailed: 0 };
+          SB.rpc('report_round', {
+            p_client_id: SB.clientId(), p_nickname: mine.name || charOf(mine).name,
+            p_char_id: mine.charId, p_won: ranking.indexOf(mine) === 0,
+            p_rent: st.rentGot || 0, p_jail: st.jailed || 0, p_money: netWorth(mine),
+          }).catch(() => { /* 云端不可达：本机榜照常，下局再补 */ });
+        }
+      }
     } catch (e) { /* 排行榜失败不影响对局结算 */ }
   }
   function showLeaderboard() {
     const rs = loadRecords();
     const TABS = [['wins', '🏆 胜场榜', r => r.wins], ['rent', '💰 收租榜', r => r.rentGot], ['jail', '⛓️ 监狱风云榜', r => r.jail]];
     const m = buildModal(`
-      <div class="m-title big">🏆 富贵排行榜（本机战绩）</div>
+      <div class="m-title big">🏆 富贵排行榜</div>
+      <div class="lb-scope"><button class="lb-tab on" data-s="local">本机战绩</button><button class="lb-tab" data-s="cloud">🌐 全网榜</button></div>
       <div class="lb-tabs">${TABS.map((t, i) => `<button class="lb-tab ${i === 0 ? 'on' : ''}" data-t="${t[0]}">${t[1]}</button>`).join('')}</div>
       <div class="lb-body" id="lb-body"></div>
       <div class="m-actions center"><button class="btn btn-ghost" id="lb-close">关闭</button></div>`, 'nomax');
     const body = $('#lb-body', m.el);
+    let scope = 'local';
+    let cloud = null;   // null=未拉取 []=已拉取（含失败空集）
+    const activeKey = () => m.el.querySelector('.lb-tabs .lb-tab.on').dataset.t;
+    function renderCloud() {
+      const key = activeKey();
+      const label = key === 'rent' ? '累计收租' : key === 'jail' ? '入狱次数' : '胜场';
+      const val = r => key === 'rent' ? r.rent_total : key === 'jail' ? r.jail_times : r.wins;
+      if (cloud === null) { body.innerHTML = '<div class="dim" style="padding:16px;text-align:center">正在拉取全网战绩…</div>'; return; }
+      const top = cloud.slice().sort((a, b) => val(b) - val(a)).slice(0, 10);
+      const show = v => key === 'rent' ? fmt(v) : String(v | 0);
+      body.innerHTML = top.length ? ('<div class="lb-row lb-head"><span>#</span><span>名号</span><span>角色</span><span style="text-align:right">' + label + '</span></div>' +
+        top.map((r, i) => `<div class="lb-row"><span class="lb-rk ${i < 3 ? 'top' + (i + 1) : ''}">${i + 1}</span>` +
+        `<span class="lb-name">${esc(r.nickname)}</span><span class="lb-char">${(CHARACTERS.find(c => c.id === r.char_id) || {}).name || ''}</span>` +
+        `<span class="lb-val">${show(val(r))}</span></div>`).join('')) : '<div class="dim" style="padding:16px;text-align:center">全网还没有战绩，去开第一局！</div>';
+    }
     function render(key, label, val) {
+      if (scope === 'cloud') { renderCloud(); return; }
       const top = rs.slice().sort((a, b) => val(b) - val(a)).slice(0, 10);
       const show = v => key === 'rent' ? fmt(v) : String(v | 0);   /* 胜场 / 入狱次数不是金额 */
       body.innerHTML = top.length ? ('<div class="lb-row lb-head"><span>#</span><span>名号</span><span>角色</span><span style="text-align:right">' + label + '</span></div>' +
@@ -1845,8 +1876,21 @@ html.stage-short #ah-rps{font-size:12px}
         `<span class="lb-name">${r.name}${(typeof CAREER !== 'undefined' && r.title && CAREER.byId(r.title)) ? CAREER.badgeHTML(CAREER.byId(r.title), { small: true }) : ''}</span><span class="lb-char">${(CHARACTERS.find(c => c.id === r.charId) || {}).name || ''}</span>` +
         `<span class="lb-val">${show(val(r))}</span></div>`).join('')) : '<div class="dim" style="padding:16px;text-align:center">还没有战绩，先赢一局！</div>';
     }
-    m.el.querySelectorAll('.lb-tab').forEach(b => b.onclick = () => {
-      m.el.querySelectorAll('.lb-tab').forEach(x => x.classList.remove('on')); b.classList.add('on');
+    m.el.querySelectorAll('.lb-scope .lb-tab').forEach(b => b.onclick = () => {
+      m.el.querySelectorAll('.lb-scope .lb-tab').forEach(x => x.classList.remove('on')); b.classList.add('on');
+      scope = b.dataset.s;
+      if (scope === 'cloud' && cloud === null && window.SB) {
+        fetch(SB.url + '/rest/v1/players?select=nickname,char_id,wins,rent_total,jail_times&order=updated_at.desc&limit=200', {
+          headers: { apikey: SB.key, authorization: 'Bearer ' + SB.key },
+        }).then(r => r.ok ? r.json() : Promise.reject(r.status))
+          .then(j => { cloud = j || []; })
+          .catch(() => { cloud = []; })
+          .then(renderCloud);
+      }
+      const t = TABS.find(t => t[0] === activeKey()); render(t[0], t[1], t[2]);
+    });
+    m.el.querySelectorAll('.lb-tabs .lb-tab').forEach(b => b.onclick = () => {
+      m.el.querySelectorAll('.lb-tabs .lb-tab').forEach(x => x.classList.remove('on')); b.classList.add('on');
       const t = TABS.find(t => t[0] === b.dataset.t); render(t[0], t[1], t[2]);
     });
     render('wins', '胜场', r => r.wins);
@@ -2131,6 +2175,7 @@ html.stage-short #ah-rps{font-size:12px}
   function initGameScene() {
     uixStyle();
     ntReset();
+    for (const k in lastMoney) delete lastMoney[k];   /* 新局现金从初值起显示，不从上局残值补间闪跳 */
     buildBoard();
     buildDice();
     buildTokens();

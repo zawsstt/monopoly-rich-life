@@ -60,7 +60,10 @@ function seasonSalary() {
   return CFG.SALARY * (G.season && G.season.id === 'salary' ? 2 : 1);
 }
 function pickSeason() {
-  G.season = SEASONS[rnd(SEASONS.length)];
+  /* 轮转而非独立随机：不与上季重复（README 承诺「轮转」，避免连续多期同季的错觉） */
+  const prev = G.season ? G.season.id : null;
+  const pool = SEASONS.filter(s => s.id !== prev);
+  G.season = pool[rnd(pool.length)];
   ui.updateHUD();
   ui.toast(`${G.season.icon} 本期事件：${G.season.name} — ${G.season.desc}`, G.season.icon);
   ui.news(`${G.season.icon} 本期事件：${G.season.name}，${G.season.desc}！`);
@@ -172,6 +175,8 @@ async function runGame() {
       try { ui.abortTransient(); } catch (e2) { /* */ }
       try { ui.toast(`⚠️ 回合处理出错，已跳过（${faults}/3）`, '⚠️'); ui.log('⚠️ 回合处理出错：' + String(e && e.message || e), 'bad'); } catch (e3) { /* */ }
       if (faults >= 3) { try { await endGame(); } catch (e4) { G.over = true; } return; }
+      /* 异常兜底推进前先判存活：全员出局应结算而不是把回合交给死人空转 */
+      if (alivePlayers().length <= 1) { try { await endGame(); } catch (e5) { G.over = true; } return; }
       const prev = G.cur;
       let next = prev;
       for (let k = 0; k < G.players.length; k++) { next = (next + 1) % G.players.length; if (G.players[next] && G.players[next].alive) break; }
@@ -280,10 +285,14 @@ async function playTurn(gid) {
         if (use) { player.bailCards--; freed = true; ui.toast(`🎫 ${pname(player)} 使用出狱许可证`, '🎫'); if (G.stats) G.stats[player.idx].bailCardUsed++; }
       }
       if (!freed) {
-        const pay = await decide(player, () => player.money >= 8000, {
+        /* 人类侧现金不足时不给「交保释金」按钮：点了必然走变卖/破产链，误触即出局（AI 侧沿用 8000 门槛） */
+        const canBail = player.ai ? player.money >= 8000 : player.money >= CFG.JAIL_BAIL;
+        const pay = await decide(player, () => canBail, {
           title:'⛓️ 身陷囹圄',
           html:`<p>${pname(player)} 正在服刑（第 ${player.jailTurns}/${CFG.JAIL_MAX} 回合）。<br>缴纳保释金 <b>${fmt(CFG.JAIL_BAIL)}</b> 可立即出狱掷骰，否则本回合跳过。</p>`,
-          choices:[{v:true,label:`交保释金 ${fmt(CFG.JAIL_BAIL)}`,kind:'primary'},{v:false,label:'继续蹲一回合',kind:'ghost'}],
+          choices: canBail
+            ? [{v:true,label:`交保释金 ${fmt(CFG.JAIL_BAIL)}`,kind:'primary'},{v:false,label:'继续蹲一回合',kind:'ghost'}]
+            : [{v:false,label:'现金不足，继续蹲一回合',kind:'ghost'}],
         });
         if (gid !== G.gameId) return;
         if (pay) {
@@ -416,6 +425,8 @@ async function sendToJail(gid, player, { escort = true, cutscene = true, reason 
     const paid = Math.min(player.money, fine);
     player.money -= paid;
     ui.moneyFloat(player, -paid);
+    G.pot += paid;              // 罚款入奖池（与公园格文案一致：税收与罚款都汇入奖池）
+    ui.updateHUD();
     return paid;
   };
   /* 只罚款：不押送不收押 */
@@ -492,7 +503,7 @@ async function runAuction(gid, idx, { seller } = {}) {
   const t = BOARD[idx], st = G.tiles[idx];
   const level = st.level || 0;
   const market = t.type === 'prop' ? t.price + level * t.buildCost : t.price;
-  const bankPrice = Math.round(market / 2 / 100) * 100;   // 银行半价保底
+  const bankPrice = Math.round(market * CFG.AUCTION_START / 100) * 100;   // 银行半价保底（走 CFG，与卖房判定同源）
   const minStep = Math.max(200, Math.round(market * CFG.AUCTION_STEP / 100) * 100);
   let curBid = bankPrice;
   let leader = null;
@@ -522,7 +533,7 @@ async function runAuction(gid, idx, { seller } = {}) {
     const at = order.findIndex(p => p.idx === (seller.idx + 1) % G.players.length);
     pos = at >= 0 ? at : 0;
   }
-  let idle = 0;
+  let asked = new Set();   // 自上次出价起已被询问过且仍在场的座位：全员问过无人加价 → 流拍
   const active = new Set(order.map(p => p.idx));
   /* 大厅入口询问：每位本地人类依次选择参与或旁观（同屏多人逐个问；联机客人仍走各自终端的询问） */
   const localHumans = order.filter(p => !p.ai && !(NET.active && NET.isRemoteSeat(p.idx)));
@@ -531,7 +542,7 @@ async function runAuction(gid, idx, { seller } = {}) {
     const jr = await ui.auctionJoinAsk({ idx, bankPrice, who: localHumans.length > 1 ? pname(humanP) : null });
     if (gid !== G.gameId) return null;
     if (jr === 'watch') {
-      active.delete(humanP.idx); idle++;
+      active.delete(humanP.idx);
       ui.auctionPass(humanP, '旁观不参与');
     }
   }
@@ -549,14 +560,15 @@ async function runAuction(gid, idx, { seller } = {}) {
     if (gid !== G.gameId) return null;
     if (active.size === 0) break;
     if (leader && active.size === 1 && active.has(leader.idx)) break;   // 只剩领先者
-    if (idle >= active.size) break;                                     // 一整轮无人加价
+    let allAsked = true; for (const i of active) if (!asked.has(i)) { allAsked = false; break; }
+    if (allAsked) break;                                                // 剩余竞拍者本轮全部问过且无人加价 → 流拍
     const p = order[pos % order.length]; pos++;
     if (!active.has(p.idx)) continue;
     ui.auctionTurn(p);
     const need = leader ? curBid + minStep : curBid;
     let bid = null;
     if (p.money < need) {
-      active.delete(p.idx); idle++;
+      active.delete(p.idx);
       ui.auctionPass(p, '现金不足');
       ui.log(`　${pname(p)} 退出竞拍（现金不足）`, 'info');
       continue;
@@ -576,16 +588,16 @@ async function runAuction(gid, idx, { seller } = {}) {
       if (r === 'bid') bid = need;
     }
     if (bid != null) {
-      leader = p; curBid = bid; idle = 0;
+      leader = p; curBid = bid; asked.clear();
       ui.auctionBid(p, bid);
       SFX.cash();
       ui.log(`　<b style="color:${playerColor(p)}">${pname(p)}</b> 出价 <b>${fmt(bid)}</b>`, 'buy');
     } else {
       active.delete(p.idx);
-      idle++;
       ui.auctionPass(p);
       if (p.ai) ui.log(`　${pname(p)} 放弃竞拍`, 'info');
     }
+    asked.add(p.idx);   /* 出价者/弃权者均已"被询问"：出价者暂留场内等下一圈，弃权者已被移出 */
   }
 
   await sleep(450);
@@ -629,7 +641,7 @@ function bankBuyout(seller, idx, price) {
 }
 
 /* ---------- 落格结算 ---------- */
-async function resolveTile(gid, player, depth) {
+async function resolveTile(gid, player, depth, viaCard) {
   if (gid !== G.gameId || !player.alive || G.over) return;
   if (depth > 3) return;
   const idx = player.pos;
@@ -726,13 +738,16 @@ async function resolveTile(gid, player, depth) {
       } else {
         // —— 别人的地：交租（地主在押期间免租；在押优先级最高，收租令/护身符均不消耗） ——
         const owner = G.players[st.owner];
-        if (owner.inJail) {
-          ui.toast(`⛓️ 地主 ${pname(owner)} 正在服刑，${t.name} 本轮免租！`, '⛓️');
-          ui.log(`⛓️ ${pname(owner)} 在押，${t.name} 本轮免收租金`, 'info');
+        /* 在押 = 监狱服刑 / 行政拘留 / 净化管控三种状态（规则弹窗承诺「在押一律免租」） */
+        const ownerHeld = owner.inJail || owner.detained || (window.PSA && PSA.shouldSkip && PSA.shouldSkip(owner.idx));
+        if (ownerHeld) {
+          const why = owner.inJail ? '正在服刑' : owner.detained ? '被行政拘留' : '净化管控中';
+          ui.toast(`⛓️ 地主 ${pname(owner)} ${why}，${t.name} 本轮免租！`, '⛓️');
+          ui.log(`⛓️ ${pname(owner)} ${why}，${t.name} 本轮免收租金`, 'info');
           await sleep(650);
           break;
         }
-        const rent = seasonRent(rentOf(idx, st.owner, st.level));
+        const rent = seasonRent(rentOf(idx, st.owner, st.level, viaCard ? 7 : undefined));
         if (player.shield) {
           if (owner.bailiff) {
             /* 强制收租令击穿护身符：租客仍须付租，双方状态同消（DESIGN_PROPS_V2.md §3 bailiff） */
@@ -785,8 +800,10 @@ async function resolveTile(gid, player, depth) {
     }
 
     case 'tax': {
+      /* 所得税下限不再超过持有现金：空仓玩家缴光即止，不被税格强行拖进变卖/破产链 */
+      const incomeFloor = Math.min(2000, player.money);
       const amount = t.taxKind === 'income'
-        ? Math.min(12000, Math.max(2000, Math.round(player.money * 0.1 / 100) * 100))
+        ? Math.min(12000, Math.max(incomeFloor, Math.round(player.money * 0.1 / 100) * 100))
         : Math.round(netWorth(player) * 0.03 / 100) * 100;
       ui.toast(`🧾 ${t.name}：上缴 ${fmt(amount)}`, '🧾');
       await charge(player, amount, null, { toPot:true });
@@ -959,7 +976,7 @@ async function applyCard(gid, player, card, depth) {
     if (card.fly) { ui.toast(`✈️ ${pname(player)} 登上专机！`, '✈️'); }
     await moveDirect(gid, player, card.moveTo, { fx: card.fly ? 'plane' : null });
     if (gid !== G.gameId) return;
-    await resolveTile(gid, player, depth + 1);
+    await resolveTile(gid, player, depth + 1, true);
   } else if (card.moveRel != null) {
     const steps = Math.abs(card.moveRel);
     if (card.moveRel > 0) {
@@ -973,7 +990,7 @@ async function applyCard(gid, player, card, depth) {
         await ui.moveToken(player, true);
       }
     }
-    await resolveTile(gid, player, depth + 1);
+    await resolveTile(gid, player, depth + 1, true);
   } else if (card.nearest) {
     let target = player.pos;
     for (let k = 1; k <= BOARD.length; k++) {
@@ -985,7 +1002,7 @@ async function applyCard(gid, player, card, depth) {
     if (card.ride) ui.toast(`🚕 ${pname(player)} 打到车了，直奔${BOARD[target].name}！`, '🚕');
     await moveDirect(gid, player, target, { fx: card.ride || null });
     if (gid !== G.gameId) return;
-    await resolveTile(gid, player, depth + 1);
+    await resolveTile(gid, player, depth + 1, true);
   }
 }
 
@@ -1345,6 +1362,12 @@ async function endGame() {
   /* 联机：把最终名次广播给客人（此前客人永远看不到结算画面，对局在他们那里「无声消失」） */
   if (NET.active && NET.isHost && typeof NET.broadcast === 'function') {
     NET.broadcast({ t: 'over', order: ranking.map(p => p.idx), worth: ranking.map(p => netWorth(p)), stats: G.stats, token: G.matchToken });
+  }
+  /* 净化锁屏(防逃避设计)优先于结算弹窗：锁未释放时不弹结算，等它结束(看门狗保证会释放) */
+  if (window.PSA && PSA.isLocked && PSA.isLocked()) {
+    await new Promise(res => {
+      const t = setInterval(() => { if (!PSA.isLocked()) { clearInterval(t); res(); } }, 400);
+    });
   }
   await ui.showGameOver(ranking, humanWon);
 }

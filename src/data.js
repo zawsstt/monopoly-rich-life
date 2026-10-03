@@ -76,6 +76,15 @@ const CHARACTERS = [
     title:'AI 投资人', desc:'算力惊人的机器人，从不情绪化，也从不迟到。' },
 ];
 
+/* 素材 CDN 化：角色立绘/头像/姿势图统一经 A() 映射（Supabase Storage，见 index.html [SB] 引导段） */
+if (typeof window !== 'undefined' && window.A) {
+  CHARACTERS.forEach(function (ch) {
+    ['avatarImg', 'tokenImg', 'poseHit', 'poseCheer'].forEach(function (k) {
+      if (ch[k]) ch[k] = A(ch[k]);
+    });
+  });
+}
+
 /* ---------- 地产颜色分组 ---------- */
 const GROUPS = {
   g1: { name:'胡同小筑', color:'#a9704a' },
@@ -253,11 +262,14 @@ function utilityCount(ownerIdx) {
   BOARD.forEach((t, i) => { if (t.type === 'utility' && G.tiles[i].owner === ownerIdx) n++; });
   return n;
 }
-/* 地租：地产租金（垄断加倍仅作用于空地） */
-function rentOf(idx, ownerIdx, level) {
+/* 地租：地产租金（垄断加倍仅作用于空地）；cardRoll：卡牌传送落公用事业时的固定计租点数（掷骰为空） */
+function rentOf(idx, ownerIdx, level, cardRoll) {
   const t = BOARD[idx];
   if (t.type === 'station') return CFG.STATION_RENT[Math.max(0, stationCount(ownerIdx) - 1)];
-  if (t.type === 'utility') return G.lastRoll * (utilityCount(ownerIdx) === 2 ? CFG.UTILITY_RENT[1] : CFG.UTILITY_RENT[0]);
+  if (t.type === 'utility') {
+    const roll = (cardRoll != null) ? cardRoll : G.lastRoll;   // 卡牌传送按固定 7 点，不沿用把你送来的旧骰点
+    return roll * (utilityCount(ownerIdx) === 2 ? CFG.UTILITY_RENT[1] : CFG.UTILITY_RENT[0]);
+  }
   let r = t.price * CFG.RENT_MULT[level];
   if (level === 0 && monopolized(idx, ownerIdx)) r *= 2;
   return Math.round(r);

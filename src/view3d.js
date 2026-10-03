@@ -1139,7 +1139,8 @@ const V3D = (() => {
         c.drawImage(img, (cv.width - dw) / 2, (cv.height - dh) / 2, dw, dh);
         feltTex.needsUpdate = true;
       };
-      img.src = 'assets/img/scene_poster.jpg';
+      img.crossOrigin = 'anonymous';   /* CDN 化后走跨域 WebGL 纹理：需 CORS 头（Supabase Storage 默认放行） */
+      img.src = window.A ? A('assets/img/scene_poster.jpg') : 'assets/img/scene_poster.jpg';
     }
     const feltSide = matStd(FELT_C, { rough: 0.96 });
     const felt = new THREE.Mesh(

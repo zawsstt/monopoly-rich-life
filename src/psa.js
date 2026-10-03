@@ -21,7 +21,7 @@ const PSA = (() => {
   const HONOR_KEY = 'df_honor_v1';            // 诚信档案（localStorage）
   const LAST_KEY = 'df_psa_last';             // 上次播放的片源序号（sessionStorage，避免连续重复）
   const EXEMPT_KEY = 'df_psa_exempt';         // 教育豁免开关（'1' = 豁免）
-  const MOVIE_BASES = ['gongyi_movie/', '../gongyi_movie/'];   // 仓库根 gongyi_movie/：同 Web 根优先，其次上级（serve 仓库根时页面位于 /monopoly/）
+  const MOVIE_BASES = (window.SB && SB.cdn ? [SB.asset('gongyi_movie/')] : []).concat(['gongyi_movie/', '../gongyi_movie/']);   // CDN 优先（Supabase Storage），仓库副本兜底
   const MOVIE_NAMES = ['视频A', '视频B', '视频C', '视频D', '视频E', '视频F'];   // 改名后的片源（规避原始标题）
   const MOVIE_COUNT = MOVIE_NAMES.length;     // 探测 视频A.mp4 .. 视频F.mp4
   const HEAD_TIMEOUT_MS = 3000;               // 单个 HEAD 超时
@@ -425,7 +425,19 @@ const PSA = (() => {
       try { u.log(`🕊️ ${nameOf(p)} 屡次致人入狱，被强制净化心灵`, 'bad'); } catch (e) { /* */ }
     }
     if (!local) {
-      /* AI / 联机远程座位：无本机终端可锁 → 公告 + 跳一回合（当前 AI 路障策略实际不会触发，此分支为规则完备性兜底） */
+      /* 联机远程座位：经 askSeat 下发管控指令，客人在自己终端本地锁屏看片（联机局净化心灵不再退化为跳回合） */
+      if (typeof NET !== 'undefined' && NET.active && NET.isRemoteSeat && NET.isRemoteSeat(p.idx)) {
+        p.skipNext = (p.skipNext | 0) + 1;
+        p.custody = true;
+        custody.add(seat);   // 房主端 shouldSkip / 在押免租判定即刻生效
+        try { await NET.askSeat(p.idx, { kind: 'custody' }); } catch (e) { /* 客人端失败不阻断对局 */ }
+        /* 客人锁屏结束（或超时兜底）：解除管控；改过自新判定仅对本地座位有意义，远程座位跳过 */
+        custody.delete(seat);
+        p.custody = false;
+        try { u.updatePlayers(); } catch (e) { /* */ }
+        return true;
+      }
+      /* 纯 AI 座位：无本机终端可锁 → 公告 + 跳一回合 */
       p.skipNext = (p.skipNext | 0) + 1;
       if (u) { try { u.toast(`🕊️ ${nameOf(p)} 被强制带走净化心灵，下回合暂停`, '🕊️'); } catch (e) { /* */ } }
       return true;
@@ -576,8 +588,24 @@ const PSA = (() => {
     } catch (e) { /* */ }
   })();
 
+  /* 联机客人侧：房主判管控后经 NET.askSeat({kind:'custody'}) 调起 —— 本地锁屏看片，
+   * 不依赖本地引擎状态（客人的 G 只是镜像），释放即回执房主 */
+  function remoteCustody() {
+    return new Promise(async res => {
+      try {
+        while (isLocked()) { await sleepMs(250); }
+        let pick = null;
+        try { const found = await probeVideos(); if (found.length) pick = pickMovie(found); } catch (e) { pick = null; }
+        trace.triggered++;
+        const L = _lock({ kind: 'pending', onRelease: () => res(true) });
+        if (pick) L.attach({ kind: 'video', src: pick.url, durSec: 0 });
+        else L.attach({ kind: 'text', durSec: TEXT_SEC });
+      } catch (e) { res(false); }
+    });
+  }
+
   return {
-    notifyJailCaused, shouldSkip, isLocked, abort, honorConsume, onMatchEnd, exempt, state, honor: honorRead,
+    notifyJailCaused, shouldSkip, isLocked, abort, honorConsume, onMatchEnd, exempt, state, honor: honorRead, remoteCustody,
     /* 冒烟 / 诊断钩子（smoke_psa.js） */
     __test: {
       lock: _lock, current: () => lock, probeVideos, headOk, pickMovie, honorRead, honorWrite, recordViolation, onPageGone, purifyFinish,
