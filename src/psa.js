@@ -292,7 +292,7 @@ const PSA = (() => {
       } catch (e) { /* */ }
       const knownDur = knownDurIn > 0 ? +knownDurIn : 0;
       let dur = knownDur || UNKNOWN_VIDEO_SEC;
-      let lastTick = 0, retried = false, failed = false, playing = false;
+      let lastTick = 0, retried = false, failed = false, playing = false, stallTicks = 0, stallReloaded = false;
       L.totalSec = knownDur;
       setProgress(0, knownDur);
       armWatchdog(dur);
@@ -339,6 +339,31 @@ const PSA = (() => {
         if (b > lastBuf + 0.05) { stallMs = 0; lastBuf = b; setHint('⏳ 片源加载中，已缓冲 ' + Math.round(b) + 's…'); }
         else stallMs += 5000;
         if (stallMs >= READY_TIMEOUT_MS) videoFailed();
+      }, 5000);
+      /* 播放停滞自愈：起播后进度 10s 不动（CDN 瞬时断流）→ 重载片源一次；再停滞 → 文字兜底。
+       * ended / released / 已失败一律不管；与就绪等待共用 failed / retried 标志语义 */
+      let lastPos = -1;
+      every(() => {
+        if (L.released || failed || L.mode !== 'video' || !L.video) return;
+        const t = v.currentTime || 0;
+        if (v.ended) { stallTicks = 0; return; }
+        if (t > lastPos + 0.4) { lastPos = t; stallTicks = 0; return; }
+        if (!playing) return;   /* 尚未起播：交给就绪等待逻辑 */
+        stallTicks += 1;
+        if (stallTicks === 2 && !stallReloaded) {
+          stallReloaded = true;
+          try { setHint('⏳ 片源短暂中断，正在自动恢复…'); } catch (e) { /* */ }
+          try {
+            const resumeAt = t;   /* load() 会归零进度：先记位置，元数据回来后续播 */
+            v.pause();
+            v.load();
+            const onMeta = () => { try { v.currentTime = resumeAt; } catch (e2) { /* */ } v.removeEventListener('loadedmetadata', onMeta); };
+            v.addEventListener('loadedmetadata', onMeta);
+            play().catch(() => { /* */ });
+          } catch (e) { /* */ }
+        } else if (stallTicks >= 4) {
+          videoFailed();
+        }
       }, 5000);
       /* 起播链：有声 → 静音兜底（autoplay 策略）→ 手势按钮；三者都不改变「不可跳过」 */
       const showStartButton = () => {
