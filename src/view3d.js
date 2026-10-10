@@ -2657,7 +2657,9 @@ const V3D = (() => {
   const loopFn = (dtOverride) => {
     lastTick = performance.now();
     if (!running) { rafId = 0; return; }
-    rafId = requestAnimationFrame(loopFn);
+    /* rAF 回调自带时间戳形参：不包一层，loopFn 的 dtOverride 会被当成 dt（秒），
+     * 键盘速度爆到 1e5 被边界钳制吃掉（WASD 相机失效）且 tween a.t += dt 瞬间完成 */
+    rafId = requestAnimationFrame(function () { loopFn(); });
     const dt = dtOverride != null ? dtOverride : Math.min(0.05, clock.getDelta());
     if (!renderer || !container || container.offsetParent === null) return;  // 对局界面隐藏时休眠
     worldT += dt;
@@ -2808,7 +2810,7 @@ const V3D = (() => {
       if (!running) return;
       if (performance.now() - lastTick > 600) loopFn(Math.min(0.25, clock.getDelta()));
     }, 250);
-    rafId = requestAnimationFrame(loopFn);
+    rafId = requestAnimationFrame(function () { loopFn(); });
   }
 
   function resize() {
