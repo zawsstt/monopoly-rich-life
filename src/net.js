@@ -306,7 +306,7 @@ const NET = (() => {
   /* updatePlayers 不进 MIRROR_FNS：每次 moneyFloat 都触发它，双通道（即时 ui 广播 + 节流 sync）
    * 会把客人端消息量放大数倍——面板状态统一走下方节流全量 sync */
   const MIRROR_FNS = ['log', 'toast', 'news', 'splash', 'moneyFloat', 'floatAt', 'flashTile',
-    'setActive', 'setPhase', 'updateHUD', 'renderBlocks', 'rideStart', 'rideEnd', 'propFanfare'];
+    'setActive', 'setPhase', 'updateHUD', 'renderBlocks', 'rideStart', 'rideEnd', 'propFanfare', 'setTokenHidden'];
   let mirrorOrig = null;   // 原始引用表：destroy 时还原，避免包装层跨局残留
   function installMirror() {
     if (ui.__netMirror === true) return;   /* 房主「再来一局」会再次开局：防止二次包裹造成每条消息双发 */
@@ -397,7 +397,7 @@ const NET = (() => {
   }
   function isDisconnected(idx) { return disconnected.has(idx); }
   function isRemoteSeatOnline(idx) { return conns.has(idx); }
-  function askSeat(seat, payload) {
+  function askSeat(seat, payload, timeoutMs) {
     return new Promise(res => {
       const reqId = 'h' + (askSeq++);
       pendingAsks.set(reqId, res);
@@ -418,7 +418,7 @@ const NET = (() => {
           if (arr) pendingBySeat.set(seat, arr.filter(x => x.reqId !== reqId));
           res(null);
         }
-      }, 120000);
+      }, Math.max(1000, timeoutMs || 120000));   /* 净化管控类请求（客人要看完整片）需更长的窗口 */
     });
   }
   function resolveAsk(reqId, v) {
@@ -470,6 +470,7 @@ const NET = (() => {
       case 'log': case 'toast': case 'news': case 'splash': case 'floatAt':
       case 'setActive': case 'setPhase': case 'updateHUD': case 'updatePlayers':
       case 'renderBlocks': case 'rideStart': case 'rideEnd': case 'flashTile':
+      case 'setTokenHidden':
         ui[fn].apply(ui, args); break;
       case 'moneyFloat': {
         const p = G.players[args[0]];
@@ -553,7 +554,7 @@ const NET = (() => {
   return {
     host, join, destroy, startHeartbeat,
     toSeat, broadcast, toHost, sendChat,
-    installMirror, sendSync, snapshot, isRemoteSeat, askSeat, resolveAsk,
+    installMirror, sendSync, snapshot, isRemoteSeat, isRemoteSeatOnline, askSeat, resolveAsk,
     guestHandlers,
     on(t, fn) { handlers['user_' + t] = fn; },
     get active() { return active; },
