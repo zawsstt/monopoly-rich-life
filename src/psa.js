@@ -205,6 +205,7 @@ const PSA = (() => {
       setTimeout(() => { try { el.remove(); } catch (e) { /* */ } }, 350);
       if (lock === L) lock = null;
       try { if (typeof BGM !== 'undefined' && BGM && BGM.duck) BGM.duck(false); } catch (e) { /* */ }   /* 影院结束：BGM 原进度归队 */
+      try { if (typeof SFX !== 'undefined' && SFX && SFX.duck) SFX.duck(false); } catch (e) { /* */ }   /* 音效恢复 */
       trace.released++;
       trace.releasedBy = L.releasedBy;
       if (why !== 'abort' && onRelease) { try { onRelease(L.releasedBy); } catch (e) { /* */ } }
@@ -212,6 +213,7 @@ const PSA = (() => {
     L.release = release;
     lock = L;
     try { if (typeof BGM !== 'undefined' && BGM && BGM.duck) BGM.duck(true); } catch (e) { /* */ }   /* 影院锁屏：BGM 让位片源声音 */
+    try { if (typeof SFX !== 'undefined' && SFX && SFX.duck) SFX.duck(true); } catch (e) { /* */ }   /* 游戏音效一并让位 */
 
     /* —— 指针 / 键盘拦截 —— */
     const stop = e => { try { e.preventDefault(); e.stopPropagation(); } catch (e2) { /* */ } };
