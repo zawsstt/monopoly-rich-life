@@ -32,7 +32,7 @@ const PSA = (() => {
   const TEXT_ON_VIDEO_FAIL_SEC = 60;          // 视频加载/解码失败 → 文字净化上限 60s
   const WATCHDOG_SLACK_SEC = 45;              // 看门狗：时长 + 45s 无条件解锁
   const UNKNOWN_VIDEO_SEC = 120;              // 元数据未知时的保守时长假设（硬上限）
-  const READY_TIMEOUT_MS = 15000;             // readyState 15s 仍 <3 → 视为加载失败
+  const READY_TIMEOUT_MS = 15000;             // 就绪停滞判定：连续 15s 缓冲零增长且 readyState <3 → 视为加载失败
   const PENDING_FALLBACK_MS = 18000;          // 待接入态超时：18s 内片源没接上 → 文字净化兜底
   const TEXT_ROTATE_MS = 10000;               // 文字净化文案轮播间隔
   const TEXT_PSAS = [
@@ -329,7 +329,17 @@ const PSA = (() => {
         if (!retried) { retried = true; lastTick = 0; try { v.load(); play().catch(() => { /* */ }); } catch (e) { videoFailed(); } }   // 重载源一次
         else videoFailed();
       });
-      later(() => { if (!L.released && !failed && !(v.readyState >= 3)) videoFailed(); }, READY_TIMEOUT_MS);
+      /* 就绪等待（进度感知）：大文件冷启动首帧可能远超 15s——只要缓冲还在增长就一直等
+       * （提示条显示已缓冲秒数），完全停滞 READY_TIMEOUT_MS 才判死；已可播则静默复位停滞计 */
+      let stallMs = 0, lastBuf = -1;
+      every(() => {
+        if (L.released || failed || started !== true || L.mode !== 'video' || !L.video) return;
+        if (v.readyState >= 3) { stallMs = 0; lastBuf = -1; return; }
+        const b = (v.buffered && v.buffered.length) ? v.buffered.end(v.buffered.length - 1) : 0;
+        if (b > lastBuf + 0.05) { stallMs = 0; lastBuf = b; setHint('⏳ 片源加载中，已缓冲 ' + Math.round(b) + 's…'); }
+        else stallMs += 5000;
+        if (stallMs >= READY_TIMEOUT_MS) videoFailed();
+      }, 5000);
       /* 起播链：有声 → 静音兜底（autoplay 策略）→ 手势按钮；三者都不改变「不可跳过」 */
       const showStartButton = () => {
         try {
