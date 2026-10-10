@@ -425,16 +425,33 @@ const PSA = (() => {
       try { u.log(`🕊️ ${nameOf(p)} 屡次致人入狱，被强制净化心灵`, 'bad'); } catch (e) { /* */ }
     }
     if (!local) {
-      /* 联机远程座位：经 askSeat 下发管控指令，客人在自己终端本地锁屏看片（联机局净化心灵不再退化为跳回合） */
+      /* 联机远程座位：经 askSeat 下发管控指令，客人在自己终端本地锁屏看片。
+       * 铁律：绝不 await —— 房主回合链若等客人看完视频，全场引擎停摆数分钟（联机最大事故）。
+       * 管控期该座位回合由 shouldSkip 即时跳过（与本地语义一致，不再额外 skipNext）；
+       * 客人回执 / 座位离线 / 12min 兜底超时，任一先到即解除管控。 */
       if (typeof NET !== 'undefined' && NET.active && NET.isRemoteSeat && NET.isRemoteSeat(p.idx)) {
-        p.skipNext = (p.skipNext | 0) + 1;
         p.custody = true;
         custody.add(seat);   // 房主端 shouldSkip / 在押免租判定即刻生效
-        try { await NET.askSeat(p.idx, { kind: 'custody' }); } catch (e) { /* 客人端失败不阻断对局 */ }
-        /* 客人锁屏结束（或超时兜底）：解除管控；改过自新判定仅对本地座位有意义，远程座位跳过 */
-        custody.delete(seat);
-        p.custody = false;
-        try { u.updatePlayers(); } catch (e) { /* */ }
+        try { if (u) { u.setTokenHidden(seat, true); u.updatePlayers(); } } catch (e) { /* */ }
+        const releaseRemote = () => {
+          if (!custody.has(seat)) return;
+          custody.delete(seat);
+          p.custody = false;
+          try { if (u) { u.setTokenHidden(seat, false); u.updatePlayers(); } } catch (e) { /* */ }
+        };
+        /* 座位离线（断线宽限到期交 AI / 主动退出）即刻解除，避免对已离席座位空跳十几分钟 */
+        const offlinePoll = setInterval(() => {
+          try {
+            if (typeof NET === 'undefined' || !NET.active || (NET.isRemoteSeatOnline && !NET.isRemoteSeatOnline(seat))) {
+              clearInterval(offlinePoll);
+              releaseRemote();
+            }
+          } catch (e) { /* */ }
+        }, 2000);
+        NET.askSeat(p.idx, { kind: 'custody' }, 12 * 60 * 1000).then(() => {
+          clearInterval(offlinePoll);
+          releaseRemote();
+        }).catch(() => { clearInterval(offlinePoll); releaseRemote(); });
         return true;
       }
       /* 纯 AI 座位：无本机终端可锁 → 公告 + 跳一回合 */
@@ -589,7 +606,8 @@ const PSA = (() => {
   })();
 
   /* 联机客人侧：房主判管控后经 NET.askSeat({kind:'custody'}) 调起 —— 本地锁屏看片，
-   * 不依赖本地引擎状态（客人的 G 只是镜像），释放即回执房主 */
+   * 不依赖本地引擎状态（客人的 G 只是镜像），锁屏以任何原因结束（播完/看门狗/abort）都必须回执房主，
+   * 否则 promise 悬挂、房主端管控只能等超时 */
   function remoteCustody() {
     return new Promise(async res => {
       try {
@@ -597,7 +615,8 @@ const PSA = (() => {
         let pick = null;
         try { const found = await probeVideos(); if (found.length) pick = pickMovie(found); } catch (e) { pick = null; }
         trace.triggered++;
-        const L = _lock({ kind: 'pending', onRelease: () => res(true) });
+        const L = _lock({ kind: 'pending' });
+        const poll = setInterval(() => { if (L.released) { clearInterval(poll); res(true); } }, 200);
         if (pick) L.attach({ kind: 'video', src: pick.url, durSec: 0 });
         else L.attach({ kind: 'text', durSec: TEXT_SEC });
       } catch (e) { res(false); }
