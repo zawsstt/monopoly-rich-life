@@ -677,7 +677,7 @@ const V3D = (() => {
       renderer.shadowMap.autoUpdate = false;      // 静态场景：仅运动时刷新阴影
       renderer.outputEncoding = THREE.sRGBEncoding;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.26;
+      renderer.toneMappingExposure = 1.06;
       const el = renderer.domElement;
       el.id = 'gl-canvas';
       el.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;z-index:10;display:block;touch-action:none;';
@@ -733,8 +733,8 @@ const V3D = (() => {
     fxRoot = new THREE.Group(); scene.add(fxRoot);
 
     /* --- 灯光 --- */
-    scene.add(new THREE.HemisphereLight(0xf6f2e6, 0x1a2a22, 0.72));
-    scene.add(new THREE.AmbientLight(0xfff6e8, 0.30));
+    scene.add(new THREE.HemisphereLight(0xf2f7ea, 0x0d211a, 0.52));
+    scene.add(new THREE.AmbientLight(0xffffff, 0.2));
     const sun = new THREE.DirectionalLight(0xfff1d6, 1.12);
     sun.position.set(26, 44, 18);
     const shadowSize = qualityState.shadow > 0 ? qualityState.shadow : 2048;   // 分档：high 2048 / mobile 1024
@@ -946,13 +946,13 @@ const V3D = (() => {
 
     /* 沥青路面（暖深灰 #4a4a4f 系 + 噪点纹理，粗糙 0.95） */
     const aCv = document.createElement('canvas');
-    aCv.width = aCv.height = 512;                 /* 128→512：沥青颗粒在斜视/近景下不再糊成一片 */
+    aCv.width = aCv.height = 128;
     const ac = aCv.getContext('2d');
-    ac.fillStyle = '#4a4a4f'; ac.fillRect(0, 0, 512, 512);
-    for (let k = 0; k < 13600; k++) {             /* 密度同比放大（850×16） */
+    ac.fillStyle = '#4a4a4f'; ac.fillRect(0, 0, 128, 128);
+    for (let k = 0; k < 850; k++) {
       const v = 56 + Math.floor(Math.random() * 30);
       ac.fillStyle = 'rgba(' + v + ',' + v + ',' + (v + 4) + ',' + (0.10 + Math.random() * 0.22).toFixed(2) + ')';
-      ac.fillRect(Math.random() * 512, Math.random() * 512, 3, 3);
+      ac.fillRect(Math.random() * 128, Math.random() * 128, 1.5, 1.5);
     }
     const aTex = canvasTexture(aCv);
     aTex.wrapS = aTex.wrapT = THREE.RepeatWrapping;
@@ -964,14 +964,14 @@ const V3D = (() => {
 
     /* 两侧米色石材路缘（窄条 + 分段缝贴图：每 2.4 单位一道缝） */
     const cCv = document.createElement('canvas');
-    cCv.width = cCv.height = 512;                 /* 128→512：石材接缝与颗粒更清晰 */
+    cCv.width = cCv.height = 128;
     const cc = cCv.getContext('2d');
-    cc.fillStyle = '#d9cfb4'; cc.fillRect(0, 0, 512, 512);
-    cc.fillStyle = 'rgba(0,0,0,.18)'; cc.fillRect(0, 0, 16, 512);
-    cc.fillStyle = 'rgba(255,255,255,.30)'; cc.fillRect(16, 0, 12, 512);
-    for (let k = 0; k < 3840; k++) {              /* 密度同比放大（240×16） */
+    cc.fillStyle = '#d9cfb4'; cc.fillRect(0, 0, 128, 128);
+    cc.fillStyle = 'rgba(0,0,0,.18)'; cc.fillRect(0, 0, 4, 128);
+    cc.fillStyle = 'rgba(255,255,255,.30)'; cc.fillRect(4, 0, 3, 128);
+    for (let k = 0; k < 240; k++) {
       cc.fillStyle = 'rgba(120,105,78,' + (0.06 + Math.random() * 0.12).toFixed(2) + ')';
-      cc.fillRect(Math.random() * 512, Math.random() * 512, 4, 4);
+      cc.fillRect(Math.random() * 128, Math.random() * 128, 2, 2);
     }
     const cTex = canvasTexture(cCv);
     cTex.wrapS = cTex.wrapT = THREE.RepeatWrapping;
