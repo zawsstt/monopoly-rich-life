@@ -7,3 +7,9 @@ node_modules/
 # 交接文档与 IDE 配置(不提交)
 HANDOVER.md
 .idea/
+
+# 非本项目内容（玄学宣传片素材，与游戏无关，禁止随作品分发）
+fengshui-*
+风水玄学*
+启动宣传片.bat
+交付清单.md

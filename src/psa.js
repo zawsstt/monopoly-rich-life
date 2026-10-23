@@ -6,7 +6,8 @@
  *  - 演出：复用 ui.arrestCutscene → 警车押送到 32 拘留所格（不置 inJail，无服刑逻辑）→ 人物消失
  *  - 管控：触发者本机终端进入影院模式锁屏；管控期 PSA.shouldSkip(seat) 令 playTurn 自动跳过
  *          AI / 联机远程座位无本机终端可锁 → 公告 + skipNext 代替（规则完备性兜底）
- *  - 视频：串行 HEAD 探测 gongyi_movie/视频A..F.mp4（3s/个），全无则降级「文字净化」30s 倒计时
+ *  - 视频：片源已下架（原素材含第三方节目版权，不可再分发）→ MOVIE_ENABLED=false 恒走「文字净化」30s 倒计时
+ *          播放链路完整保留，将来接入合规片源置回 true 即可；?psa=0 仍为纯演出豁免
  *  - 铁律：任何故障都有限时出口 —— ended / 文字倒计时 / dur+45s 看门狗，玩家永不被永久锁死
  *  - 防逃避：遮罩存在期间 beforeunload/pagehide → localStorage.df_honor_v1.violated（含时间戳）+ dishonored
  *            下局 newGame 读 dishonored（一次性消费）→ 初始资金 −20%（取整百）+「失信人员」角标
@@ -21,6 +22,11 @@ const PSA = (() => {
   const HONOR_KEY = 'df_honor_v1';            // 诚信档案（localStorage）
   const LAST_KEY = 'df_psa_last';             // 上次播放的片源序号（sessionStorage，避免连续重复）
   const EXEMPT_KEY = 'df_psa_exempt';         // 教育豁免开关（'1' = 豁免）
+  /* 2026-10-22：公益片源整体下架（原素材为第三方电视节目片段，版权原因不可再分发）。
+   * 下架后恒走 TEXT_SEC 秒「文字净化」，probeVideos 直接短路返回空，不再发起 15s HEAD 探测。
+   * 影片播放链路（影院锁 / 时长管控 / 看门狗）完整保留：将来接入合规片源时，
+   * 把 MOVIE_ENABLED 置回 true 并恢复 gongyi_movie/ 目录即可原样复用。 */
+  const MOVIE_ENABLED = false;                // 片源总开关：false = 恒文字净化
   const MOVIE_BASES = (window.SB && SB.cdn ? [SB.asset('gongyi_movie/')] : []).concat(['gongyi_movie/', '../gongyi_movie/']);   // CDN 优先（Supabase Storage），仓库副本兜底
   const MOVIE_NAMES = ['video_A', 'video_B', 'video_C', 'video_D', 'video_E', 'video_F'];   // ASCII 片名：Supabase Storage 拒收中文 key（InvalidKey）
   const MOVIE_COUNT = MOVIE_NAMES.length;     // 探测 video_A.mp4 .. video_F.mp4
@@ -127,6 +133,7 @@ const PSA = (() => {
     });
   }
   async function probeVideos(opts) {
+    if (!MOVIE_ENABLED) return [];   // 片源已下架：短路，上层自动降级文字净化（不发请求、零等待）
     const bases = (opts && opts.bases) || MOVIE_BASES;
     const count = (opts && opts.count) || MOVIE_COUNT;
     const head = (opts && opts.head) || headOk;
@@ -612,7 +619,7 @@ const PSA = (() => {
       prewarmMovie, dropPrewarm, prewarmState: () => prewarmed,
       honorReset: () => { try { localStorage.removeItem(HONOR_KEY); } catch (e) { /* */ } },
       custody, matches, trace,
-      C: { HONOR_KEY, MOVIE_BASES, MOVIE_COUNT, HEAD_TIMEOUT_MS, CUSTODY_POS, THRESHOLD, TEXT_SEC, TEXT_ON_VIDEO_FAIL_SEC, WATCHDOG_SLACK_SEC, UNKNOWN_VIDEO_SEC, READY_TIMEOUT_MS, PENDING_FALLBACK_MS },
+      C: { HONOR_KEY, MOVIE_ENABLED, MOVIE_BASES, MOVIE_COUNT, HEAD_TIMEOUT_MS, CUSTODY_POS, THRESHOLD, TEXT_SEC, TEXT_ON_VIDEO_FAIL_SEC, WATCHDOG_SLACK_SEC, UNKNOWN_VIDEO_SEC, READY_TIMEOUT_MS, PENDING_FALLBACK_MS },
     },
   };
 })();

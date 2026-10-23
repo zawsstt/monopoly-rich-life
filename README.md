@@ -1,6 +1,6 @@
-# 大富翁 · 富贵人生 WEB 版
+# 富贵人生 WEB 版
 
-> 3D 沙盘大富翁 —— 一张书桌、一座城、六个奇人、一把骰子。
+> 3D 沙盘桌游 —— 一张书桌、一座城、六个奇人、一把骰子。
 > 纯浏览器运行 · 无需安装 · 支持 2-4 人联机对战
 
 ![style](https://img.shields.io/badge/style-low--poly_3D-blue) ![engine](https://img.shields.io/badge/engine-Three.js_r147-green) ![net](https://img.shields.io/badge/multiplayer-WebRTC+Supabase-orange) ![storage](https://img.shields.io/badge/storage-Supabase_Storage-success) ![license](https://img.shields.io/badge/license-学习专用·禁用商用-red)
@@ -18,7 +18,7 @@
 ### 0x02 玩法特性
 
 - **双视角自由镜头**：全局俯瞰 / 跟随角色第一人称，拖拽 360° 环绕、滚轮缩放，WASD 与方向键精准推镜
-- **六位奇人**：地产大亨 · 商界女强人 · 元气少女 · 围地狂魔 · 神秘怪人 · AI 投资人，各自 3D 精细建模
+- **六位奇人**：地产巨头 · 商界女强人 · 元气少女 · 围地狂魔 · 神秘怪人 · AI 投资人，各自 3D 精细建模
 
 | 富老板 | 钱掌柜 | 糖糖 | 土老财 | 丧彪 | 豆豆 |
 |:---:|:---:|:---:|:---:|:---:|:---:|
@@ -57,11 +57,10 @@
 │   ├── bgm.js                  # 音乐播放器（主界面 / 对局双场景）
 │   ├── sfx.js                  # WebAudio 音效合成
 │   ├── ai.js                   # AI 决策
-│   ├── psa.js                  # 公益短片净化系统（gongyi_movie/）
+│   ├── psa.js                  # 心灵净化系统（文字净化 30s 倒计时）
 │   ├── career.js               # 生涯称号档案
 │   └── main.js                 # 入口与大厅
 ├── assets                      # 素材（img / audio / sfx / models，仓库副本作 CDN 兜底）
-├── gongyi_movie                # 公益短片（视频A-F.mp4，入狱净化播放）
 ├── supabase
 │   └── migrations              # 云端初始化 SQL：storage 桶 / 排行榜 / 联机房间表 + RLS
 └── tools                       # 运维脚本：素材上传 / 缓存指纹 bump
@@ -99,7 +98,7 @@ python -m http.server 8123    # 或 npx serve .
 
 - 素材默认从 **Supabase Storage 公开桶 `game-assets`** 分发（CDN），仓库内副本自动兜底：任一资源 CDN 拉取失败即整会话降级本地，游戏不白屏
 - 棋盘主题模型按需加载：经典 / 现代两套 3D 资产只载当前主题的一套（省 ~3.5MB 首开流量），联机时跟随房主主题动态补载
-- 部署者可通过 `tools/upload-assets.mjs` 一键把 `assets/` + `gongyi_movie/` 同步进自家 Supabase 项目（见 `supabase/migrations/` 初始化 SQL）
+- 部署者可通过 `tools/upload-assets.mjs` 一键把 `assets/` 同步进自家 Supabase 项目（见 `supabase/migrations/` 初始化 SQL）
 
 ### 0x08 声明与许可
 
@@ -109,4 +108,4 @@ python -m http.server 8123    # 或 npx serve .
 - 二次创作（魔改、转载）请保留本声明并标注来源
 - 游戏素材（立绘 / 建筑 / 音频）仅限本项目的学习演示场景
 
-© 2026 大富翁 · 富贵人生 WEB 版 — 学习交流项目，祝各位发财。
+© 2026 富贵人生 WEB 版 — 学习交流项目，祝各位发财。

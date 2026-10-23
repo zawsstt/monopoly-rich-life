@@ -21,6 +21,49 @@ const V3D = (() => {
   const TILE = 3, COLS = 13, ROWS = 9;
   const TILE_TOP = 1.25;                 // 地砖顶面世界高度
   const CHAR_SCALE = 1.08;               // 角色缩放（工厂高约 1.75 → 1.9）
+
+  /* ===== GLB 角色实验通道（?glbchar=1）=====
+   * 用 Aholo Lux3D 图生 3D 的 textured.glb 替换参数化角色模型。
+   * 注意三点（实测踩过）：
+   *  1. Aholo 返回两个 GLB：ZIP 内 MODEL.glb 贴图是 2×2 灰色占位，必须用返回体里的 textured.glb
+   *  2. 导出默认 metallicFactor=1.0（全金属），不降到 dielectric 会渲染成纯黑
+   *  3. GLB 无 parts 骨骼契约 → animToken 自动跳过，角色为静态（不摆臂不呼吸）
+   * 加载是异步的：先按原逻辑建角色，GLB 到位后原地换掉 model，保留色环与名字牌。 */
+  /* 默认启用 GLB 角色；?glbchar=0 可回退到参数化模型（对比/救急用） */
+  const GLB_CHAR = (() => {
+    try {
+      const v = new URLSearchParams(location.search).get('glbchar');
+      return v === null ? true : v === '1';
+    } catch (e) { return true; }
+  })();
+  const GLB_CHARS = ['boss', 'qian', 'tang', 'tu', 'ren', 'doudou'];   // 已产出的角色（新增角色在此登记即可）
+  const glbCharCache = new Map();        // charId -> THREE.Object3D（含缩放/落地校正）
+  function loadGlbChar(charId, cb) {
+    if (!GLB_CHAR || typeof THREE === 'undefined' || !THREE.GLTFLoader) { cb && cb(null); return; }
+    if (glbCharCache.has(charId)) { cb && cb(glbCharCache.get(charId)); return; }
+    new THREE.GLTFLoader().load('assets/models/glb/' + charId + '.glb', g => {
+      const src = g.scene;
+      src.traverse(o => {
+        if (o.isMesh) {
+          o.castShadow = true;
+          if (o.material) {
+            o.material.metalness = 0.15;       // 抵消导出的全金属默认值
+            o.material.roughness = 0.85;
+            o.material.needsUpdate = true;
+          }
+        }
+      });
+      /* 归一化：统一到角色身高契约 1.75（再乘 CHAR_SCALE），并把脚底对齐 y=0 */
+      const box = new THREE.Box3().setFromObject(src);
+      const h = Math.max(0.001, box.max.y - box.min.y);
+      const s = (1.75 / h) * CHAR_SCALE;
+      src.scale.setScalar(s);
+      const box2 = new THREE.Box3().setFromObject(src);
+      src.position.y -= box2.min.y;
+      glbCharCache.set(charId, src);
+      cb && cb(src);
+    }, undefined, e => { try { console.warn('[glbchar] load fail', charId, e); } catch (_) {} cb && cb(null); });
+  }
   const HOME_CAM = { pos: [0, 28.5, 24.5], target: [0, 0.4, 1.0] };
   /* ---------- fit-to-view：HOME 机位距离按容器宽高比动态计算 ----------
    * 棋盘外框 44.6×32.6（半径 22.3/16.3）必须完整入画（每边留 ≥6% 边距，fov=45°）。
@@ -1780,7 +1823,11 @@ const V3D = (() => {
       const nameSp = makeNameSprite(c ? c.name : '?', c ? c.color : '#fff');
       nameSp.position.y = 2.75;
       group.add(nameSp);
-      const stand = standOf(p.pos, 0, 1);
+      /* 同格多人沿环线切向排开：与 moveToken 用同一套算法。
+       * 原来硬编码 (0,1) 会让同格角色全叠在一点，low-poly 时不明显，换高模后直接叠成"缝合怪"。 */
+      const sameNow = ((typeof G !== 'undefined' && G && G.players) ? G.players : []).filter(q => q.alive && q.pos === p.pos);
+      const kNow = Math.max(0, sameNow.indexOf(p));
+      const stand = standOf(p.pos, kNow, Math.max(1, sameNow.length));
       group.position.set(stand.x, ROAD_TOP_Y, stand.z);
       tokenRoot.add(group);
       const parts = (model.userData && model.userData.parts) || null;
@@ -1789,6 +1836,21 @@ const V3D = (() => {
         mode: 'idle', phase: Math.random() * 6, targetRotY: stand.rot,
         panic: false, ride: null, dead: false,
       });
+      /* GLB 通道：异步到位后原地换模型，色环 / 名字牌 / 站位不动 */
+      if (GLB_CHAR && GLB_CHARS.indexOf(p.charId) >= 0) {
+        const seat = p.idx;
+        loadGlbChar(p.charId, glb => {
+          const rig = tokens.get(seat);
+          if (!glb || !rig) return;
+          rig.group.remove(rig.model);
+          const inst = glb.clone(true);   // 共享 geometry/material，只克隆节点
+          rig.group.add(inst);
+          rig.model = inst;
+          rig.parts = null;               // 无骨骼契约 → animToken 自动跳过
+          rig.glb = true;
+          shadowDirty();
+        });
+      }
     }
     shadowDirty();
   }

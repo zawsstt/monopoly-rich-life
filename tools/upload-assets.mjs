@@ -16,7 +16,7 @@ const REF = 'rzzryotatqucfwtgjcaa';
 const SB = `https://${REF}.supabase.co`;
 const KEY = env.SUPABASE_SERVICE_KEY;
 const BUCKET = 'game-assets';
-const ROOTS = ['assets', 'gongyi_movie'];   // 上传范围:全部素材(代码 js/src 不上传)
+const ROOTS = ['assets'];   // 上传范围:全部素材(代码 js/src 不上传；gongyi_movie 版权下架已移除)
 const MIME = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.svg': 'image/svg+xml',
   '.webp': 'image/webp', '.gif': 'image/gif', '.ico': 'image/x-icon',

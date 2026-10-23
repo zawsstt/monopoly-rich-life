@@ -12,7 +12,7 @@ process.chdir(fileURLToPath(new URL('..', import.meta.url)));
 
 const REF = 'rzzryotatqucfwtgjcaa';
 const PUB = `https://${REF}.supabase.co/storage/v1/object/public/game-assets`;
-const ROOTS = ['assets', 'gongyi_movie'];
+const ROOTS = ['assets'];
 const RETRY = +(argv[argv.indexOf('--retry') + 1] || 2);
 
 async function walk(dir) {
