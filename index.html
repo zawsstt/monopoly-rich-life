@@ -34,9 +34,12 @@ window.SB = (function () {
   try { SB_OVERRIDE = q && q.get('sb'); } catch (e) { /* */ }
   var BASE = SB_OVERRIDE || ('https://' + REF + '.supabase.co');
   var CDN = SB_OVERRIDE ? '' : (BASE + '/storage/v1/object/public/game-assets/');
-  var on = true;
+  var on = false;   /* 素材默认走仓库本地副本：CDN 上仍是旧版头像/海报/Logo，会导致版本不一致。
+                     * 排行榜与联机仍走 Supabase API（见 BASE），只有 assets 寻址受影响。
+                     * 需要 CDN 分发时加 ?cdn=1 显式开启；Storage 侧素材更新后再考虑切回默认。 */
   try {
-    if (q && q.get('cdn') === '0') on = false;
+    if (q && q.get('cdn') === '1') on = true;
+    else if (q && q.get('cdn') === '0') on = false;
     else if (sessionStorage.getItem('df_cdn_down') === '1') on = false;
     else if (localStorage.getItem('df_cdn') === '0') on = false;
   } catch (e) { /* */ }
