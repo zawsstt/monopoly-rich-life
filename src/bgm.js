@@ -39,7 +39,7 @@ const BGM = (() => {
   }
 
   function play() {
-    if (!on || !mode) return;
+    if (!on || !mode || psaDucked) return;   /* PSA 让位期间不起新曲（手势/setMode 补播一律挡下） */
     stop();
     const list = mode === 'menu' ? MENU : GAME;
     audio = new Audio();
@@ -54,7 +54,7 @@ const BGM = (() => {
 
   /* 只在“有曲目却因拦截而暂停”时补一次 play；正在播放、曲间空档、已结束一律不动 */
   function tryResume() {
-    if (!on || !mode) return;
+    if (!on || !mode || psaDucked) return;
     if (!audio) { play(); return; }
     if (audio.paused && !audio.ended && !gapTimer) attempt();
   }
@@ -72,6 +72,20 @@ const BGM = (() => {
    * 接受该平台行为，不做伪检测、不做 WebAudio 绕过。 */
   let hiddenPaused = false;   /* 因页面隐藏而暂停 → 回前台要续播 */
   let gapFrozen = false;      /* 曲间空档计时器被冻结 → 回前台要续排 */
+  let psaDucked = false;      /* PSA 影院锁屏期间 BGM 让位片源声音（暂停并抑制一切补播） */
+  let duckGapFrozen = false;  /* 让位期间冻结的曲间空档 → 解除让位后要续排 */
+  function duck(on_) {
+    on_ = !!on_;
+    if (on_ === psaDucked) return;
+    psaDucked = on_;
+    if (on_) {
+      if (gapTimer) { clearTimeout(gapTimer); gapTimer = 0; duckGapFrozen = true; }
+      if (audio && !audio.paused && !audio.ended) { try { audio.pause(); } catch (e) { /* ignore */ } }
+    } else {
+      if (duckGapFrozen) { duckGapFrozen = false; gapTimer = setTimeout(() => { gapTimer = 0; idx++; play(); }, 600); }
+      tryResume();   /* 被让位暂停的曲目 → 原进度续播；空档期按上面续排 */
+    }
+  }
   function pauseForHidden() {
     if (gapTimer) { clearTimeout(gapTimer); gapTimer = 0; gapFrozen = true; }
     if (audio && !audio.paused && !audio.ended) {
@@ -107,6 +121,7 @@ const BGM = (() => {
     },
     isEnabled() { return on; },
     getMode() { return mode; },
-    debug() { return { mode, on, playing: !!audio && !audio.paused, ended: !!audio && audio.ended, t: audio ? audio.currentTime : 0, src: audio ? audio.src : '', hiddenPaused, gapFrozen }; },
+    duck: duck,
+    debug() { return { mode, on, ducked: psaDucked, playing: !!audio && !audio.paused, ended: !!audio && audio.ended, t: audio ? audio.currentTime : 0, src: audio ? audio.src : '', hiddenPaused, gapFrozen }; },
   };
 })();

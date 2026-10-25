@@ -96,11 +96,20 @@ const SFX = (() => {
   }
 
   let hopFlip = false;
+  let psaDucked = false;   /* PSA 影院锁屏期间：游戏音效让位片源声音（master 拉零，已排队尾音一并静掉） */
   const api = {
     unlock() { const c = ensure(); if (c) resumeCtx(); },
     loadSamples,
     setEnabled(v) { enabled = v; try { localStorage.setItem('df_sfx', v ? '1' : '0'); } catch (e) { /* ignore */ } if (bgmGain) bgmGain.gain.value = v ? 0.16 : 0; if (!v) api.bgmStop(); },
     isEnabled() { return enabled; },
+    /* 影院让位：master 增益平滑拉零/恢复（psa.js 锁屏/释放时调用；视频走 <video> 通道不受影响） */
+    duck(on_) {
+      psaDucked = !!on_;
+      const c = ensure();
+      if (!c || !master) return;
+      try { master.gain.setTargetAtTime(psaDucked ? 0 : 0.9, c.currentTime, 0.04); } catch (e) { try { master.gain.value = psaDucked ? 0 : 0.9; } catch (e2) { /* ignore */ } }
+    },
+    isDucked() { return psaDucked; },
 
     click()   { tone(760, 0.06, { type:'triangle', vol:0.15 }); },
     hover()   { tone(520, 0.04, { type:'sine', vol:0.06 }); },

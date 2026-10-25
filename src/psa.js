@@ -38,7 +38,7 @@ const PSA = (() => {
   const TEXT_ON_VIDEO_FAIL_SEC = 60;          // 视频加载/解码失败 → 文字净化上限 60s
   const WATCHDOG_SLACK_SEC = 45;              // 看门狗：时长 + 45s 无条件解锁
   const UNKNOWN_VIDEO_SEC = 120;              // 元数据未知时的保守时长假设（硬上限）
-  const READY_TIMEOUT_MS = 15000;             // readyState 15s 仍 <3 → 视为加载失败
+  const READY_TIMEOUT_MS = 15000;             // 就绪停滞判定：连续 15s 缓冲零增长且 readyState <3 → 视为加载失败
   const PENDING_FALLBACK_MS = 18000;          // 待接入态超时：18s 内片源没接上 → 文字净化兜底
   const TEXT_ROTATE_MS = 10000;               // 文字净化文案轮播间隔
   const TEXT_PSAS = [
@@ -211,12 +211,16 @@ const PSA = (() => {
       try { el.classList.remove('show'); } catch (e) { /* */ }
       setTimeout(() => { try { el.remove(); } catch (e) { /* */ } }, 350);
       if (lock === L) lock = null;
+      try { if (typeof BGM !== 'undefined' && BGM && BGM.duck) BGM.duck(false); } catch (e) { /* */ }   /* 影院结束：BGM 原进度归队 */
+      try { if (typeof SFX !== 'undefined' && SFX && SFX.duck) SFX.duck(false); } catch (e) { /* */ }   /* 音效恢复 */
       trace.released++;
       trace.releasedBy = L.releasedBy;
       if (why !== 'abort' && onRelease) { try { onRelease(L.releasedBy); } catch (e) { /* */ } }
     };
     L.release = release;
     lock = L;
+    try { if (typeof BGM !== 'undefined' && BGM && BGM.duck) BGM.duck(true); } catch (e) { /* */ }   /* 影院锁屏：BGM 让位片源声音 */
+    try { if (typeof SFX !== 'undefined' && SFX && SFX.duck) SFX.duck(true); } catch (e) { /* */ }   /* 游戏音效一并让位 */
 
     /* —— 指针 / 键盘拦截 —— */
     const stop = e => { try { e.preventDefault(); e.stopPropagation(); } catch (e2) { /* */ } };
@@ -295,7 +299,7 @@ const PSA = (() => {
       } catch (e) { /* */ }
       const knownDur = knownDurIn > 0 ? +knownDurIn : 0;
       let dur = knownDur || UNKNOWN_VIDEO_SEC;
-      let lastTick = 0, retried = false, failed = false, playing = false;
+      let lastTick = 0, retried = false, failed = false, playing = false, stallTicks = 0, stallReloaded = false;
       L.totalSec = knownDur;
       setProgress(0, knownDur);
       armWatchdog(dur);
@@ -332,7 +336,42 @@ const PSA = (() => {
         if (!retried) { retried = true; lastTick = 0; try { v.load(); play().catch(() => { /* */ }); } catch (e) { videoFailed(); } }   // 重载源一次
         else videoFailed();
       });
-      later(() => { if (!L.released && !failed && !(v.readyState >= 3)) videoFailed(); }, READY_TIMEOUT_MS);
+      /* 就绪等待（进度感知）：大文件冷启动首帧可能远超 15s——只要缓冲还在增长就一直等
+       * （提示条显示已缓冲秒数），完全停滞 READY_TIMEOUT_MS 才判死；已可播则静默复位停滞计 */
+      let stallMs = 0, lastBuf = -1;
+      every(() => {
+        if (L.released || failed || started !== true || L.mode !== 'video' || !L.video) return;
+        if (v.readyState >= 3) { stallMs = 0; lastBuf = -1; return; }
+        const b = (v.buffered && v.buffered.length) ? v.buffered.end(v.buffered.length - 1) : 0;
+        if (b > lastBuf + 0.05) { stallMs = 0; lastBuf = b; setHint('⏳ 片源加载中，已缓冲 ' + Math.round(b) + 's…'); }
+        else stallMs += 5000;
+        if (stallMs >= READY_TIMEOUT_MS) videoFailed();
+      }, 5000);
+      /* 播放停滞自愈：起播后进度 10s 不动（CDN 瞬时断流）→ 重载片源一次；再停滞 → 文字兜底。
+       * ended / released / 已失败一律不管；与就绪等待共用 failed / retried 标志语义 */
+      let lastPos = -1;
+      every(() => {
+        if (L.released || failed || L.mode !== 'video' || !L.video) return;
+        const t = v.currentTime || 0;
+        if (v.ended) { stallTicks = 0; return; }
+        if (t > lastPos + 0.4) { lastPos = t; stallTicks = 0; return; }
+        if (!playing) return;   /* 尚未起播：交给就绪等待逻辑 */
+        stallTicks += 1;
+        if (stallTicks === 2 && !stallReloaded) {
+          stallReloaded = true;
+          try { setHint('⏳ 片源短暂中断，正在自动恢复…'); } catch (e) { /* */ }
+          try {
+            const resumeAt = t;   /* load() 会归零进度：先记位置，元数据回来后续播 */
+            v.pause();
+            v.load();
+            const onMeta = () => { try { v.currentTime = resumeAt; } catch (e2) { /* */ } v.removeEventListener('loadedmetadata', onMeta); };
+            v.addEventListener('loadedmetadata', onMeta);
+            play().catch(() => { /* */ });
+          } catch (e) { /* */ }
+        } else if (stallTicks >= 4) {
+          videoFailed();
+        }
+      }, 5000);
       /* 起播链：有声 → 静音兜底（autoplay 策略）→ 手势按钮；三者都不改变「不可跳过」 */
       const showStartButton = () => {
         try {
@@ -432,16 +471,33 @@ const PSA = (() => {
       try { u.log(`🕊️ ${nameOf(p)} 屡次致人入狱，被强制净化心灵`, 'bad'); } catch (e) { /* */ }
     }
     if (!local) {
-      /* 联机远程座位：经 askSeat 下发管控指令，客人在自己终端本地锁屏看片（联机局净化心灵不再退化为跳回合） */
+      /* 联机远程座位：经 askSeat 下发管控指令，客人在自己终端本地锁屏看片。
+       * 铁律：绝不 await —— 房主回合链若等客人看完视频，全场引擎停摆数分钟（联机最大事故）。
+       * 管控期该座位回合由 shouldSkip 即时跳过（与本地语义一致，不再额外 skipNext）；
+       * 客人回执 / 座位离线 / 12min 兜底超时，任一先到即解除管控。 */
       if (typeof NET !== 'undefined' && NET.active && NET.isRemoteSeat && NET.isRemoteSeat(p.idx)) {
-        p.skipNext = (p.skipNext | 0) + 1;
         p.custody = true;
         custody.add(seat);   // 房主端 shouldSkip / 在押免租判定即刻生效
-        try { await NET.askSeat(p.idx, { kind: 'custody' }); } catch (e) { /* 客人端失败不阻断对局 */ }
-        /* 客人锁屏结束（或超时兜底）：解除管控；改过自新判定仅对本地座位有意义，远程座位跳过 */
-        custody.delete(seat);
-        p.custody = false;
-        try { u.updatePlayers(); } catch (e) { /* */ }
+        try { if (u) { u.setTokenHidden(seat, true); u.updatePlayers(); } } catch (e) { /* */ }
+        const releaseRemote = () => {
+          if (!custody.has(seat)) return;
+          custody.delete(seat);
+          p.custody = false;
+          try { if (u) { u.setTokenHidden(seat, false); u.updatePlayers(); } } catch (e) { /* */ }
+        };
+        /* 座位离线（断线宽限到期交 AI / 主动退出）即刻解除，避免对已离席座位空跳十几分钟 */
+        const offlinePoll = setInterval(() => {
+          try {
+            if (typeof NET === 'undefined' || !NET.active || (NET.isRemoteSeatOnline && !NET.isRemoteSeatOnline(seat))) {
+              clearInterval(offlinePoll);
+              releaseRemote();
+            }
+          } catch (e) { /* */ }
+        }, 2000);
+        NET.askSeat(p.idx, { kind: 'custody' }, 12 * 60 * 1000).then(() => {
+          clearInterval(offlinePoll);
+          releaseRemote();
+        }).catch(() => { clearInterval(offlinePoll); releaseRemote(); });
         return true;
       }
       /* 纯 AI 座位：无本机终端可锁 → 公告 + 跳一回合 */
@@ -596,7 +652,8 @@ const PSA = (() => {
   })();
 
   /* 联机客人侧：房主判管控后经 NET.askSeat({kind:'custody'}) 调起 —— 本地锁屏看片，
-   * 不依赖本地引擎状态（客人的 G 只是镜像），释放即回执房主 */
+   * 不依赖本地引擎状态（客人的 G 只是镜像），锁屏以任何原因结束（播完/看门狗/abort）都必须回执房主，
+   * 否则 promise 悬挂、房主端管控只能等超时 */
   function remoteCustody() {
     return new Promise(async res => {
       try {
@@ -604,7 +661,8 @@ const PSA = (() => {
         let pick = null;
         try { const found = await probeVideos(); if (found.length) pick = pickMovie(found); } catch (e) { pick = null; }
         trace.triggered++;
-        const L = _lock({ kind: 'pending', onRelease: () => res(true) });
+        const L = _lock({ kind: 'pending' });
+        const poll = setInterval(() => { if (L.released) { clearInterval(poll); res(true); } }, 200);
         if (pick) L.attach({ kind: 'video', src: pick.url, durSec: 0 });
         else L.attach({ kind: 'text', durSec: TEXT_SEC });
       } catch (e) { res(false); }

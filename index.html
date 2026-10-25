@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<title>富贵人生</title>
+<title>大富翁 · 富贵人生</title>
 <link rel="icon" href="assets/img/ico_coin.png?v=46">
 <link rel="stylesheet" href="css/style.css?v=57">
 <script>
@@ -34,12 +34,9 @@ window.SB = (function () {
   try { SB_OVERRIDE = q && q.get('sb'); } catch (e) { /* */ }
   var BASE = SB_OVERRIDE || ('https://' + REF + '.supabase.co');
   var CDN = SB_OVERRIDE ? '' : (BASE + '/storage/v1/object/public/game-assets/');
-  var on = false;   /* 素材默认走仓库本地副本：CDN 上仍是旧版头像/海报/Logo，会导致版本不一致。
-                     * 排行榜与联机仍走 Supabase API（见 BASE），只有 assets 寻址受影响。
-                     * 需要 CDN 分发时加 ?cdn=1 显式开启；Storage 侧素材更新后再考虑切回默认。 */
+  var on = true;
   try {
-    if (q && q.get('cdn') === '1') on = true;
-    else if (q && q.get('cdn') === '0') on = false;
+    if (q && q.get('cdn') === '0') on = false;
     else if (sessionStorage.getItem('df_cdn_down') === '1') on = false;
     else if (localStorage.getItem('df_cdn') === '0') on = false;
   } catch (e) { /* */ }
@@ -147,7 +144,7 @@ img[data-src][src] { transition: opacity .35s ease; }
 <body>
 <div id="boot">
   <div class="boot-frame" aria-hidden="true"></div>
-  <img class="boot-logo" data-src="assets/img/logo_title.svg?v=59" alt="富贵人生 WEB 版" draggable="false">
+  <img class="boot-logo" data-src="assets/img/logo_title.svg" alt="大富翁 · 富贵人生 WEB 版" draggable="false">
   <div class="boot-bar"><i id="boot-fill"></i></div>
   <div class="boot-tip" id="boot-tip">正在加载资源…</div>
 </div>
@@ -202,7 +199,7 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
 <div id="start-screen">
   <div class="ss-frame" aria-hidden="true"><i></i><i></i></div>
   <div class="hero">
-    <img class="hero-logo" data-src="assets/img/logo_title.svg?v=59" alt="富贵人生 WEB 版" draggable="false">
+    <img class="hero-logo" data-src="assets/img/logo_title.svg" alt="大富翁 · 富贵人生 WEB 版" draggable="false">
   </div>
 
   <div class="ss-sect"><i></i><span>选 择 你 的 角 色</span><i></i></div>
@@ -301,7 +298,7 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
 <!-- ========== 对局界面 ========== -->
 <div id="game-screen" class="hidden">
   <header id="topbar">
-    <div class="logo-mini"><img data-src="assets/img/logo_mini.svg?v=59" alt="富贵人生" draggable="false"></div>
+    <div class="logo-mini"><img data-src="assets/img/logo_mini.svg" alt="大富翁 · 富贵人生" draggable="false"></div>
     <div class="hud-chips">
       <div id="hud-round">第 1 / 30 回合</div>
       <div id="hud-season" style="display:none"></div>
@@ -334,11 +331,11 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
       </div>
       <div id="board">
         <div id="board-center">
-          <div class="ribbon-band" aria-hidden="true"><span>富贵人生</span></div>
+          <div class="ribbon-band" aria-hidden="true"><span>MONOPOLY · 富贵人生</span></div>
           <div id="toasts"></div>
           <div id="splash"></div>
           <div class="bc-block bc-brand">
-            <div class="bc-logo"><img data-src="assets/img/logo_title.svg?v=59" alt="富贵人生" draggable="false"></div>
+            <div class="bc-logo"><img data-src="assets/img/logo_title.svg" alt="大富翁 · 富贵人生" draggable="false"></div>
             <div class="pot-chip"><img data-src="assets/img/ico_coin.png" alt=""><div>奖池 <b id="pot-value">$0</b></div></div>
           </div>
           <div class="bc-block bc-action">
@@ -375,16 +372,16 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
      脚本标签为 type="text/plain" data-src，由下方加载器按文档顺序执行；data-size 为字节数（进度权重），由 tools_patch_boot_loader.py 生成。 ===== -->
 <script type="text/plain" data-src="js/lib/three.min.js?v=46" data-size="607790"></script>
 <script type="text/plain" data-src="js/lib/GLTFLoader.js?v=1" data-size="103311"></script>
-<script type="text/plain" data-src="src/data.js?v=58" data-size="24573"></script>
-<script type="text/plain" data-src="src/sfx.js?v=55" data-size="9319"></script>
-<script type="text/plain" data-src="src/bgm.js?v=55" data-size="6362"></script>
+<script type="text/plain" data-src="src/data.js?v=57" data-size="24573"></script>
+<script type="text/plain" data-src="src/sfx.js?v=69" data-size="9919"></script>
+<script type="text/plain" data-src="src/bgm.js?v=68" data-size="7269"></script>
 <script type="text/plain" data-src="src/ai.js?v=53" data-size="12635"></script>
 <script type="text/plain" data-src="src/game.js?v=57" data-size="65923"></script>
-<script type="text/plain" data-src="src/career.js?v=52" data-size="44045"></script>
+<script type="text/plain" data-src="src/career.js?v=51" data-size="44045"></script>
 <script type="text/plain" data-src="src/uix.js?v=57" data-size="135982"></script>
 <script type="text/plain" data-src="src/supa-rtc.js?v=55" data-size="6536"></script>
-<script type="text/plain" data-src="src/net.js?v=58" data-size="24926"></script>
-<script type="text/plain" data-src="src/view3d.js?v=64" data-size="153229"></script>
+<script type="text/plain" data-src="src/net.js?v=66" data-size="25792"></script>
+<script type="text/plain" data-src="src/view3d.js?v=67" data-size="153485"></script>
 <script type="text/plain" data-src="src/buildings3d.js?v=46" data-size="95501"></script>
 <script type="text/plain" data-btheme="classic" data-src="assets/models/props3d/prop_6.js?v=46" data-size="62155"></script>
 <script type="text/plain" data-btheme="classic" data-src="assets/models/props3d/prop_3.js?v=46" data-size="51095"></script>
@@ -456,7 +453,7 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
 <script type="text/plain" data-src="assets/models/chars3d/doudou.js?v=48" data-size="42788"></script>
 <script type="text/plain" data-src="assets/models/propFactories.js?v=46" data-size="12077"></script>
 <script type="text/plain" data-src="src/main.js?v=57" data-size="40893"></script>
-<script type="text/plain" data-src="src/psa.js?v=58" data-size="36674"></script>
+<script type="text/plain" data-src="src/psa.js?v=71" data-size="40480"></script>
 <script type="text/plain" data-kind="img" data-src="assets/img/scene_poster.jpg" data-size="472131"></script>
 <script type="text/plain" data-kind="img" data-src="assets/img/face3_boss.png?v=40" data-size="106990"></script>
 <script type="text/plain" data-kind="img" data-src="assets/img/face3_doudou.png?v=40" data-size="99992"></script>
