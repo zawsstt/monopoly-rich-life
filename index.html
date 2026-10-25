@@ -34,7 +34,7 @@ window.SB = (function () {
   try { SB_OVERRIDE = q && q.get('sb'); } catch (e) { /* */ }
   var BASE = SB_OVERRIDE || ('https://' + REF + '.supabase.co');
   var CDN = SB_OVERRIDE ? '' : (BASE + '/storage/v1/object/public/game-assets/');
-  var on = false;   /* 素材默认走仓库本地：Storage 上是旧版 Logo（含"大富翁"商标字样），
+  var on = false;   /* 素材默认走仓库本地：Storage 上是旧版 Logo（含已弃用的商标字样），
                      * 且 CDN 返回 200 不会触发降级，会导致品牌名回退。?cdn=1 可显式开启。
                      * 排行榜/联机仍走 Supabase API（见 BASE），仅 assets 寻址受影响。 */
   try {
