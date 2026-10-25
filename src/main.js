@@ -693,54 +693,24 @@ const main = (() => {
   function syncBoardThemeUI() {
     $$('#opt-board button').forEach(x => x.classList.toggle('on', x.dataset.bt === boardTheme));
   }
-  /* 2) 强制横屏舞台：触屏小屏设备处于竖屏时，把整个 body 顺时针旋转 90° 当作横屏舞台（H5 横屏游戏惯例），
-   *    不再弹任何「请转屏」提示。舞台尺寸由 JS 以像素写入（iOS 动态工具栏下 100vh 不可靠）；
-   *    html.stage-short 标记矮舞台（≤520px）供 CSS 压缩顶栏 / 快报条。旋转后 view3d 通过 body.force-land
-   *    把指针坐标换算到舞台坐标系（见 view3d toStage）。
-   *    能原生锁横屏的环境（已安装 PWA / 部分安卓浏览器）在首次触控时顺带尝试 screen.orientation.lock，
-   *    不强制全屏；锁成功则系统转为横屏、resize 回调自动撤掉舞台旋转。 */
-  function setupForceLandscape() {
+  /* 2) 横屏门禁：本作只支持横屏。触屏设备（手机 / iPad）竖屏时盖一层「请横屏游玩」遮罩，
+   *    不再做 body 旋转舞台——旋转会让文字变竖排、抽屉跑到侧边，用户误判成布局崩坏。
+   *    桌面窄窗口不受影响（coarse() 为假）。
+   *    html.stage-short 标记矮舞台（横屏后高度 ≤520px）供 CSS 压缩顶栏 / 快报条。
+   *    能原生锁横屏的环境（PWA / 部分安卓浏览器）在首次触控时顺带尝试 screen.orientation.lock。 */
+  function setupOrientationGate() {
     const body = document.body, rootEl = document.documentElement;
     const coarse = () => {
       try { return matchMedia('(pointer: coarse)').matches || (navigator.maxTouchPoints || 0) > 0; } catch (e) { return false; }
     };
     const apply = () => {
       const w = window.innerWidth || 0, h = window.innerHeight || 0;
-      /* 阈值 500：只拦手机竖屏；iPad/平板（短边 ≥768）本有竖屏空间，不再被强转 */
-      const force = !!(w && h && h > w && Math.min(w, h) <= 500 && coarse());
-      if (force) { body.style.width = h + 'px'; body.style.height = w + 'px'; }
-      else if (body.classList.contains('force-land')) { body.style.width = ''; body.style.height = ''; }
-      body.classList.toggle('force-land', force);
-      const stageH = force ? w : h;
-      rootEl.classList.toggle('stage-short', stageH > 0 && stageH <= 520);
-      window.__stage = { w: force ? h : w, h: stageH, rotated: force };
-      if (force) armLandHint(); else disarmLandHint();
+      const portrait = !!(w && h && h > w && coarse());
+      body.classList.toggle('portrait-gate', portrait);
+      rootEl.classList.toggle('stage-short', !portrait && h > 0 && h <= 520);
+      window.__stage = { w, h, rotated: false };
       try { if (typeof V3D !== 'undefined' && V3D && typeof V3D.resize === 'function') V3D.resize(); } catch (e) { /* 3D 未就绪 */ }
     };
-    /* 强制横屏引导：必须等游戏真正就绪（body.v3d-on）再弹，否则提示会在 boot 遮罩期间就淡出，
-     * 用户加载完看到的只是一个歪着的界面，不知道该转手机。 */
-    let hintOn = false, hintWait = 0, hintOff = 0;
-    function armLandHint() {
-      if (hintOn || hintWait) return;
-      const fire = () => {
-        hintWait = 0;
-        if (!body.classList.contains('force-land') || hintOn) return;
-        hintOn = true;
-        body.classList.add('force-land-hint');
-        hintOff = setTimeout(() => { body.classList.remove('force-land-hint'); hintOn = false; }, 5000);
-      };
-      if (body.classList.contains('v3d-on')) { fire(); return; }
-      hintWait = setInterval(() => {
-        if (body.classList.contains('v3d-on')) { clearInterval(hintWait); hintWait = 0; fire(); }
-      }, 400);
-      /* 兜底：60s 内没就绪（加载失败等）就不再等，避免定时器常驻 */
-      setTimeout(() => { if (hintWait) { clearInterval(hintWait); hintWait = 0; } }, 60000);
-    }
-    function disarmLandHint() {
-      if (hintWait) { clearInterval(hintWait); hintWait = 0; }
-      if (hintOff) { clearTimeout(hintOff); hintOff = 0; }
-      if (hintOn) { body.classList.remove('force-land-hint'); hintOn = false; }
-    }
     let timer = 0;
     const schedule = () => { apply(); clearTimeout(timer); timer = setTimeout(apply, 120); };   /* 立即一次 + 旋转后尺寸稳定再一次 */
     window.addEventListener('resize', schedule);
@@ -759,7 +729,7 @@ const main = (() => {
       try {
         const so = window.screen && screen.orientation;
         if (so && typeof so.lock === 'function') { const p = so.lock('landscape'); if (p && p.catch) p.catch(() => {}); }
-      } catch (e) { /* 不支持 / 非全屏拒绝：走舞台旋转 */ }
+      } catch (e) { /* 不支持 / 非全屏拒绝：靠遮罩引导用户手动旋转 */ }
     }, { passive: true });
   }
 
@@ -775,7 +745,7 @@ const main = (() => {
     step('charCards', buildCharCards);
     step('bindStart', bindStart);
     step('boardThemeUI', syncBoardThemeUI);
-    step('forceLandscape', setupForceLandscape);
+    step('orientationGate', setupOrientationGate);
     step('chrome', () => ui.bindChrome());
     step('gameOver', hookGameOver);
     step('sfx', () => SFX.loadSamples());

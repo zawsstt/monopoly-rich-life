@@ -51,39 +51,64 @@ body {
     radial-gradient(circle at 50% 40%, var(--felt1), var(--felt2) 58%, var(--felt3));
   overflow: hidden;
   user-select: none;
-  /* 安全区四边统一走变量：舞台旋转后由 body.force-land 重映射到物理边 */
+  /* 安全区四边统一走变量（横屏下直接对应物理边） */
   --sa-t: env(safe-area-inset-top, 0px); --sa-r: env(safe-area-inset-right, 0px);
   --sa-b: env(safe-area-inset-bottom, 0px); --sa-l: env(safe-area-inset-left, 0px);
 }
-/* ===== 强制横屏舞台：触屏小屏竖屏时 main.js 加 body.force-land 并以像素写入舞台宽高（= 视口高×宽），
- * 整个 body 绕左上角顺时针转 90°、锚在视口右上——舞台顶边落在物理右侧。子级 fixed 元素以 body 为包含块，随舞台一起旋转。
- * 物理刘海（顶）落在舞台左边、物理 Home 条（底）落在舞台右边，安全区变量按此重映射。 ===== */
-body.force-land {
-  position: fixed; left: 100%; top: 0; margin: 0;
-  transform-origin: 0 0; transform: rotate(90deg);
-  --sa-t: env(safe-area-inset-right, 0px); --sa-r: env(safe-area-inset-bottom, 0px);
-  --sa-b: env(safe-area-inset-left, 0px); --sa-l: env(safe-area-inset-top, 0px);
+/* ===== 竖屏门禁：本作只支持横屏 =====
+ * 触摸设备（手机 / iPad）竖屏时由 main.js 加 body.portrait-gate，盖一层全屏引导；
+ * 旋转到横屏后自动消失。不做 body 旋转舞台——那会让文字变竖排、抽屉跑到侧边，
+ * 用户第一眼会误判成布局崩坏。桌面窄窗口不受影响（coarse 判定为假）。 */
+#rotate-gate {
+  display: none;
+  position: fixed; inset: 0; z-index: 99999;
+  align-items: center; justify-content: center;
+  background: radial-gradient(120% 100% at 50% 32%, #15342b 0%, #08130e 62%, #040a07 100%);
+  font-family: inherit; -webkit-user-select: none; user-select: none;
 }
-/* 竖屏被强制转横后，用户第一眼看到的是"歪的"界面，容易误判为布局错乱。
- * 由 main.js 在游戏真正就绪（body.v3d-on）后加 .force-land-hint 触发，5s 自动淡出。
- * 反向旋转 90° 保证文字水平可读，pointer-events:none 不拦截任何点击。 */
-body.force-land.force-land-hint::after {
-  content: '↻ 转动手机横屏 · 视野最佳';
-  position: fixed; left: 50%; top: 50%;
-  display: block; width: max-content; max-width: 88vmin;   /* fixed 下 width:auto 会撑满，必须显式收窄 */
-  transform: translate(-50%, -50%) rotate(-90deg);
-  padding: 11px 20px; border-radius: 12px; white-space: nowrap;
-  background: rgba(6, 20, 14, .93); color: #ffd76a;
-  font-size: 15px; letter-spacing: 2px; font-weight: 700;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, .55), inset 0 0 0 1px rgba(255, 215, 106, .45);
-  z-index: 9999; pointer-events: none;
-  animation: forceLandHint 4.5s ease forwards;
+body.portrait-gate #rotate-gate { display: flex; }
+body.portrait-gate { overflow: hidden; }
+/* 门禁期间其它层不参与命中（避免底层按钮被误触） */
+body.portrait-gate #boot, body.portrait-gate #start-screen, body.portrait-gate #game-screen { pointer-events: none; }
+
+.rg-box { text-align: center; padding: 0 30px; }
+
+/* 手机图标：竖 → 横往复，暗示"转一下" */
+.rg-phone {
+  width: 58px; height: 102px; margin: 0 auto 34px; position: relative;
+  border: 3px solid rgba(255, 215, 106, .88); border-radius: 13px;
+  box-shadow: 0 0 26px rgba(240, 180, 41, .28), inset 0 0 14px rgba(240, 180, 41, .12);
+  animation: rgRotate 2.6s cubic-bezier(.45, 0, .55, 1) infinite;
+  transform-origin: 50% 50%;
 }
-@keyframes forceLandHint {
-  0%   { opacity: 0; transform: translate(-50%, -50%) rotate(-90deg) scale(.88); }
-  12%  { opacity: 1; transform: translate(-50%, -50%) rotate(-90deg) scale(1); }
-  70%  { opacity: 1; }
-  100% { opacity: 0; visibility: hidden; }
+.rg-screen {
+  position: absolute; inset: 7px 5px 15px; border-radius: 4px;
+  background: linear-gradient(160deg, rgba(255, 215, 106, .24), rgba(240, 180, 41, .06));
+}
+.rg-home {
+  position: absolute; left: 50%; bottom: 5px; transform: translateX(-50%);
+  width: 17px; height: 3px; border-radius: 2px; background: rgba(255, 215, 106, .6);
+}
+@keyframes rgRotate {
+  0%, 14%   { transform: rotate(0deg); }
+  42%, 74%  { transform: rotate(-90deg); }
+  100%      { transform: rotate(0deg); }
+}
+
+.rg-t {
+  font-size: 25px; font-weight: 800; letter-spacing: 7px;
+  color: #ffd76a; text-shadow: 0 2px 14px rgba(240, 180, 41, .4);
+  margin-bottom: 14px;
+}
+.rg-d {
+  font-size: 13.5px; line-height: 2; letter-spacing: 1px;
+  color: rgba(245, 230, 200, .7);
+}
+/* 极窄/极矮屏（老机型竖屏 320×480）收一档，保证提示不溢出 */
+@media (max-height: 520px) {
+  .rg-phone { width: 44px; height: 78px; margin-bottom: 18px; }
+  .rg-t { font-size: 19px; letter-spacing: 4px; margin-bottom: 8px; }
+  .rg-d { font-size: 12px; line-height: 1.8; }
 }
 
 .hidden { display: none !important; }
@@ -1032,7 +1057,14 @@ select option { background: #0d241b; color: #eee; }
 .m-cash { font-size: 14px; color: #c9d6c6; margin-bottom: 12px; }
 .m-cash b { color: #ffd76a; font-size: 16px; }
 .m-cash.warn b { color: #ff9a9e; }
-.m-actions { display: flex; gap: 12px; margin-top: 16px; flex-wrap: wrap; }
+.m-actions {
+  display: flex; gap: 12px; margin-top: 16px; flex-wrap: wrap;
+  /* 内容超长（道具商店 12 项、地契/资产列表）时把操作按钮吸附在弹窗底部：
+   * 否则矮屏（844×390）下要滚到底才看得到「离开商店 / 关闭」，容易被当成卡死。 */
+  position: sticky; bottom: -1px; z-index: 2;
+  padding: 10px 0 4px;
+  background: linear-gradient(180deg, rgba(11, 32, 24, 0) 0%, rgba(11, 32, 24, .96) 36%, #0b2018 100%);
+}
 .m-actions.center { justify-content: center; }
 
 /* 地契卡 */
@@ -1923,7 +1955,7 @@ body.psa-noscroll { overflow: hidden !important; }
      (max-height: 520px)        手机横屏：生涯面板取消内滚（整窗滚动）、PSA 媒体区按高度封顶
      ≤560px                     竖屏手机：结算榜单去 min-width、弹窗按钮等分、联机大厅收紧
      ≤420px                     超窄：顶栏 8 个控件压进 390px（字号 10.5px / 图标 32px）
-     body.force-land            强制横屏舞台（触屏小屏竖屏 → main.js 加类并写像素尺寸，body 顺时针转 90°；定义见文件顶部 body 段）
+     body.portrait-gate         竖屏门禁（触摸设备竖屏时盖「请横屏游玩」层；定义见文件顶部 #rotate-gate 段）
      html.stage-short           矮舞台（舞台高 ≤520px）：顶栏 44 / 快报条 28，把高度还给 3D 画布（文件末尾）
      @supports (height: 100dvh) 棋盘公式 / 弹窗高度用 dvh（iOS 动态工具栏），不支持回退 vh
    ============================================================ */
@@ -2218,23 +2250,6 @@ html.stage-short .cr-grid { grid-template-columns: repeat(5, 1fr); gap: 6px; }
 html.stage-short .cr-card { padding: 6px 4px; }
 html.stage-short .cr-card .ic { width: 36px; height: 36px; }
 
-/* 强制横屏舞台里物理 vh = 舞台宽、vw = 舞台高：原本按「屏高」封顶的规则改用 vw，按「屏宽」取值的改用 vh */
-body.force-land .modal { width: min(94vh, 480px); max-height: 92vw; }
-body.force-land .modal-mask.nomax .modal { max-width: min(94vh, 520px); }
-body.force-land .cr-body { max-height: none; }
-body.force-land #psa-lock .psa-media { aspect-ratio: auto; height: 44vw; max-height: none; }
-body.force-land #psa-lock .psa-stage { gap: 4px; padding: 6px 10px; }
-/* 媒体查询按物理宽（竖屏 360–430px）命中「超窄 / 竖屏手机」档，而舞台实际有 740–1024 宽：把顶栏与角色卡恢复到手机横屏档 */
-body.force-land #char-grid { grid-template-columns: repeat(3, 158px); gap: 15px; }
-body.force-land #topbar { gap: 8px; }
-body.force-land .tb-actions { gap: 4px; }
-body.force-land .tb-btn { padding: 6px 9px; font-size: 12px; letter-spacing: 0; }
-body.force-land .tb-ico { width: 36px; font-size: 15px; }
-body.force-land .tb-speed { min-width: 40px; font-size: 13px; }
-body.force-land #hud-round { font-size: 12px; padding: 4px 10px; letter-spacing: .5px; }
-body.force-land .opts { width: auto; gap: 12px 13px; padding: 15px 16px 12px; }   /* ≤760 档压成 560px 会把「AI 对手」挤到下一行 */
-body.force-land .modal-mask.cr-modal .modal { width: min(94vh, 820px); max-width: min(94vh, 820px); }   /* 生涯面板：≤760 档写死 94vw（物理宽 393），舞台里恢复 820 上限 */
-body.force-land .cr-grid { grid-template-columns: repeat(4, 1fr); }
 
 /* CSS 骰子（跟随视角 HUD）：固定俯视倾角由 uix.js 写进 transform 前缀（rotateX(-22deg) rotateY(28deg)），
  * 这里补一片地面投影，让立方体「落在台面上」而不是悬浮的白方块 */
@@ -2246,7 +2261,7 @@ body.force-land .cr-grid { grid-template-columns: repeat(4, 1fr); }
 
 /* ===================== 矮舞台开始界面：6 张角色卡排成一行（横屏游戏不该把角色选择折成两行再滚动） =====================
  * 卡宽 = (舞台宽 − 边距 − 5 间距) / 6 ≈ 109–127px（Galaxy S8+ 740 → iPhone 852），按 158×206 原比例等比缩放；
- * 出框立绘 / 底光 / 名牌全部改百分比，随卡片一起缩。放在文件末尾压过 ≤1099 三列、≤760 两列与 body.force-land 三列 */
+ * 出框立绘 / 底光 / 名牌全部改百分比，随卡片一起缩。放在文件末尾压过 ≤1099 三列与 ≤760 两列 */
 html.stage-short #char-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; width: min(100%, 960px); padding-top: 14px; margin-bottom: 0; }
 html.stage-short .char-card { width: auto; height: auto; min-width: 0; aspect-ratio: 158 / 206; }
 html.stage-short .cc-full { height: 76%; top: -9%; }

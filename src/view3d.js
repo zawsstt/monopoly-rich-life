@@ -2511,10 +2511,9 @@ const V3D = (() => {
   }
 
   /* ================= 投影 ================= */
-  /* ---------- 强制横屏舞台坐标（main.js 在触屏竖屏时加 body.force-land：整个 body 顺时针转 90°，锚在视口右上）----------
-   * 舞台点 (lx, ly) 落在视口 (innerWidth − ly, lx)，故视口 → 舞台：x = clientY, y = innerWidth − clientX。
-   * 所有 clientX/Y 进入 3D 层前先过 toStage；元素矩形用 elStageRect（布局尺寸不受 transform 影响，
-   * 舞台左上角 = 视口 AABB 的右上角）。未旋转时两者与原生坐标完全一致。 */
+  /* ---------- 舞台坐标换算（历史：曾用 body.force-land 把 body 转 90° 伪装横屏；现已改为竖屏门禁，
+   * 该类不再出现，stageRotated() 恒为 false，两条路径退化为原生坐标。
+   * 保留函数是为了不打断 toStage / elStageRect / ndcOf 的既有调用链，行为等价于恒等映射。 */
   function stageRotated() {
     try { return document.body.classList.contains('force-land'); } catch (e) { return false; }
   }
