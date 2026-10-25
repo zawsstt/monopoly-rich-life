@@ -64,6 +64,27 @@ body.force-land {
   --sa-t: env(safe-area-inset-right, 0px); --sa-r: env(safe-area-inset-bottom, 0px);
   --sa-b: env(safe-area-inset-left, 0px); --sa-l: env(safe-area-inset-top, 0px);
 }
+/* 竖屏被强制转横后，用户第一眼看到的是"歪的"界面，容易误判为布局错乱。
+ * 由 main.js 在游戏真正就绪（body.v3d-on）后加 .force-land-hint 触发，5s 自动淡出。
+ * 反向旋转 90° 保证文字水平可读，pointer-events:none 不拦截任何点击。 */
+body.force-land.force-land-hint::after {
+  content: '↻ 转动手机横屏 · 视野最佳';
+  position: fixed; left: 50%; top: 50%;
+  display: block; width: max-content; max-width: 88vmin;   /* fixed 下 width:auto 会撑满，必须显式收窄 */
+  transform: translate(-50%, -50%) rotate(-90deg);
+  padding: 11px 20px; border-radius: 12px; white-space: nowrap;
+  background: rgba(6, 20, 14, .93); color: #ffd76a;
+  font-size: 15px; letter-spacing: 2px; font-weight: 700;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .55), inset 0 0 0 1px rgba(255, 215, 106, .45);
+  z-index: 9999; pointer-events: none;
+  animation: forceLandHint 4.5s ease forwards;
+}
+@keyframes forceLandHint {
+  0%   { opacity: 0; transform: translate(-50%, -50%) rotate(-90deg) scale(.88); }
+  12%  { opacity: 1; transform: translate(-50%, -50%) rotate(-90deg) scale(1); }
+  70%  { opacity: 1; }
+  100% { opacity: 0; visibility: hidden; }
+}
 
 .hidden { display: none !important; }
 .dim { opacity: .55; font-weight: 400; }
@@ -2021,11 +2042,14 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 
 /* ---- ≤900px：横屏手机 / 小平板——顶栏先藏 logo、收间距（760–900 区间避免溢出） ---- */
 @media (max-width: 900px) {
-  #topbar { gap: 10px; }
+  /* 768px（iPad 竖屏）曾把「主菜单」挤出右边缘：这里补一层可横向滑动兜底 + 轻度压缩 */
+  #topbar { gap: 10px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  #topbar::-webkit-scrollbar { display: none; }
   .logo-mini { display: none; }
   .tb-actions { gap: 5px; }
-  .tb-btn { padding: 7px 10px; }
+  .tb-btn { padding: 7px 8px; font-size: 12px; letter-spacing: 0; }
   #hud-round { padding: 6px 11px; }
+  #hud-season { padding: 6px 10px; }
 }
 
 /* ---- ≤760px：手机档 HUD / 弹窗 / 开始界面 ---- */
@@ -2151,7 +2175,10 @@ html.stage-short #hud-round, html.stage-short #hud-season { padding: 3px 9px; fo
 html.stage-short .tb-btn { padding: 5px 8px; min-height: 32px; font-size: 11.5px; }
 html.stage-short .tb-ico { width: 32px; font-size: 14px; }
 html.stage-short .tb-speed { min-width: 36px; font-size: 12px; }
-html.stage-short #side-toggle { width: 36px; min-height: 32px; font-size: 15px; }
+html.stage-short #side-toggle { position: relative; width: 36px; min-height: 32px; font-size: 15px; }
+/* 矮舞台下按钮被压到 36×32（低于 44 触控标准）：视觉保持不变，用透明伪元素把命中区扩到 48×44。
+ * 只给抽屉入口扩——顶栏其它按钮本身够宽，扩了会互相压住。 */
+html.stage-short #side-toggle::after { content: ''; position: absolute; inset: -6px; border-radius: 10px; }
 html.stage-short #news-ticker, html.stage-short .nt-tag, html.stage-short .nt-view { height: 24px; }
 html.stage-short #news-ticker { min-width: 90px; margin: 0 4px; }
 html.stage-short .nt-tag { font-size: 10px; letter-spacing: 1.5px; padding: 0 8px; }

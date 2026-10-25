@@ -714,8 +714,33 @@ const main = (() => {
       const stageH = force ? w : h;
       rootEl.classList.toggle('stage-short', stageH > 0 && stageH <= 520);
       window.__stage = { w: force ? h : w, h: stageH, rotated: force };
+      if (force) armLandHint(); else disarmLandHint();
       try { if (typeof V3D !== 'undefined' && V3D && typeof V3D.resize === 'function') V3D.resize(); } catch (e) { /* 3D 未就绪 */ }
     };
+    /* 强制横屏引导：必须等游戏真正就绪（body.v3d-on）再弹，否则提示会在 boot 遮罩期间就淡出，
+     * 用户加载完看到的只是一个歪着的界面，不知道该转手机。 */
+    let hintOn = false, hintWait = 0, hintOff = 0;
+    function armLandHint() {
+      if (hintOn || hintWait) return;
+      const fire = () => {
+        hintWait = 0;
+        if (!body.classList.contains('force-land') || hintOn) return;
+        hintOn = true;
+        body.classList.add('force-land-hint');
+        hintOff = setTimeout(() => { body.classList.remove('force-land-hint'); hintOn = false; }, 5000);
+      };
+      if (body.classList.contains('v3d-on')) { fire(); return; }
+      hintWait = setInterval(() => {
+        if (body.classList.contains('v3d-on')) { clearInterval(hintWait); hintWait = 0; fire(); }
+      }, 400);
+      /* 兜底：60s 内没就绪（加载失败等）就不再等，避免定时器常驻 */
+      setTimeout(() => { if (hintWait) { clearInterval(hintWait); hintWait = 0; } }, 60000);
+    }
+    function disarmLandHint() {
+      if (hintWait) { clearInterval(hintWait); hintWait = 0; }
+      if (hintOff) { clearTimeout(hintOff); hintOff = 0; }
+      if (hintOn) { body.classList.remove('force-land-hint'); hintOn = false; }
+    }
     let timer = 0;
     const schedule = () => { apply(); clearTimeout(timer); timer = setTimeout(apply, 120); };   /* 立即一次 + 旋转后尺寸稳定再一次 */
     window.addEventListener('resize', schedule);

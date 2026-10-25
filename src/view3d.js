@@ -1846,8 +1846,11 @@ const V3D = (() => {
           const inst = glb.clone(true);   // 共享 geometry/material，只克隆节点
           rig.group.add(inst);
           rig.model = inst;
-          rig.parts = null;               // 无骨骼契约 → animToken 自动跳过
+          rig.parts = null;               // 无骨骼契约 → 交给 GLB 程序化步态分支
           rig.glb = true;
+          /* 记录基线姿态：程序化步态在基线上叠加 bob/sway/lean，避免覆盖落地校正 */
+          rig.basePos = inst.position.clone();
+          rig.baseRot = inst.rotation.clone();
           shadowDirty();
         });
       }
@@ -1857,9 +1860,37 @@ const V3D = (() => {
 
   /* ---------- 角色逐帧动画（sin 驱动，parts: head/torso/armL/armR/legL/legR） ---------- */
   function animToken(rig, dt, t) {
+    /* 朝向插值必须在 parts 判定之前：GLB 无骨骼也要面向前进方向 */
+    if (!rig.dead) {
+      rig.group.rotation.y += (rig.targetRotY - rig.group.rotation.y) * Math.min(1, dt * 11);
+    }
+    if (rig.dead) return;
     const P = rig.parts;
-    if (!P || rig.dead) return;
-    rig.group.rotation.y += (rig.targetRotY - rig.group.rotation.y) * Math.min(1, dt * 11);
+
+    /* GLB 分支：无骨骼契约，用整体姿态演算步态（bob 起伏 / sway 侧摆 / lean 前倾）。
+     * 手臂腿脚无法单独摆动，但整体节奏足以让"在走"这件事被读出来。 */
+    if (!P) {
+      const m = rig.model, bp = rig.basePos, br = rig.baseRot;
+      if (!m || !bp) return;
+      const ph = rig.phase;
+      if (rig.panic) {
+        /* 被捕：急促抖动 + 前后踉跄 */
+        const w = t * 13;
+        m.position.y = bp.y + Math.abs(Math.sin(w)) * 0.10;
+        m.rotation.z = br.z + Math.sin(w) * 0.16;
+        m.rotation.x = br.x + Math.sin(w * 1.4) * 0.10;
+      } else if (rig.mode === 'walk') {
+        m.position.y = bp.y + Math.abs(Math.sin(ph)) * 0.085;     // 每步抬升
+        m.rotation.z = br.z + Math.sin(ph) * 0.055;               // 左右重心交替
+        m.rotation.x = br.x + 0.055 + Math.cos(ph * 2) * 0.018;   // 前倾 + 步频微颤
+      } else {
+        /* 待机：呼吸浮动 + 极缓摆动 */
+        m.position.y = bp.y + Math.sin(ph) * 0.012;
+        m.rotation.z = br.z + Math.sin(ph * 0.7) * 0.010;
+        m.rotation.x = br.x + Math.sin(ph * 0.5) * 0.006;
+      }
+      return;
+    }
     if (rig.panic) {
       /* 被捕惊慌：双手乱舞 + 腿蹬 + 摇头 */
       const w = t * 13;
