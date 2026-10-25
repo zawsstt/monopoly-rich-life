@@ -708,6 +708,10 @@ const main = (() => {
       const portrait = !!(w && h && h > w && coarse());
       body.classList.toggle('portrait-gate', portrait);
       rootEl.classList.toggle('stage-short', !portrait && h > 0 && h <= 520);
+      /* 矮屏弹窗等比缩放比：逻辑高度锁 830（桌面档），按视口高度求缩放，
+       * 让手机上看到的弹窗内容量与桌面完全一致，只是整体同比变小。 */
+      const modalScale = Math.min(1, (h * 0.94) / 830);
+      rootEl.style.setProperty('--m-scale', modalScale.toFixed(3));
       window.__stage = { w, h, rotated: false };
       try { if (typeof V3D !== 'undefined' && V3D && typeof V3D.resize === 'function') V3D.resize(); } catch (e) { /* 3D 未就绪 */ }
     };
