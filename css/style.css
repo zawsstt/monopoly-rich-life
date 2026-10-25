@@ -67,6 +67,12 @@ body {
   font-family: inherit; -webkit-user-select: none; user-select: none;
 }
 body.portrait-gate #rotate-gate { display: flex; }
+/* 纯 CSS 兜底：main.js 要等引擎加载完才跑，启动阶段（#boot 还在转圈）就得拦住竖屏，
+ * 否则用户会先看到一个竖版加载页、再突然弹出横屏提示。 */
+@media (pointer: coarse) and (orientation: portrait) {
+  #rotate-gate { display: flex; }
+  body { overflow: hidden; }
+}
 body.portrait-gate { overflow: hidden; }
 /* 门禁期间其它层不参与命中（避免底层按钮被误触） */
 body.portrait-gate #boot, body.portrait-gate #start-screen, body.portrait-gate #game-screen { pointer-events: none; }
