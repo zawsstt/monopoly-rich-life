@@ -34,9 +34,12 @@ window.SB = (function () {
   try { SB_OVERRIDE = q && q.get('sb'); } catch (e) { /* */ }
   var BASE = SB_OVERRIDE || ('https://' + REF + '.supabase.co');
   var CDN = SB_OVERRIDE ? '' : (BASE + '/storage/v1/object/public/game-assets/');
-  var on = true;
+  var on = false;   /* 素材默认走仓库本地：Storage 上是旧版 Logo（含"大富翁"商标字样），
+                     * 且 CDN 返回 200 不会触发降级，会导致品牌名回退。?cdn=1 可显式开启。
+                     * 排行榜/联机仍走 Supabase API（见 BASE），仅 assets 寻址受影响。 */
   try {
-    if (q && q.get('cdn') === '0') on = false;
+    if (q && q.get('cdn') === '1') on = true;
+    else if (q && q.get('cdn') === '0') on = false;
     else if (sessionStorage.getItem('df_cdn_down') === '1') on = false;
     else if (localStorage.getItem('df_cdn') === '0') on = false;
   } catch (e) { /* */ }
@@ -144,7 +147,7 @@ img[data-src][src] { transition: opacity .35s ease; }
 <body>
 <div id="boot">
   <div class="boot-frame" aria-hidden="true"></div>
-  <img class="boot-logo" data-src="assets/img/logo_title.svg" alt="富贵人生 WEB 版" draggable="false">
+  <img class="boot-logo" data-src="assets/img/logo_title.svg?v=41" alt="富贵人生 WEB 版" draggable="false">
   <div class="boot-bar"><i id="boot-fill"></i></div>
   <div class="boot-tip" id="boot-tip">正在加载资源…</div>
 </div>
@@ -199,7 +202,7 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
 <div id="start-screen">
   <div class="ss-frame" aria-hidden="true"><i></i><i></i></div>
   <div class="hero">
-    <img class="hero-logo" data-src="assets/img/logo_title.svg" alt="富贵人生 WEB 版" draggable="false">
+    <img class="hero-logo" data-src="assets/img/logo_title.svg?v=41" alt="富贵人生 WEB 版" draggable="false">
   </div>
 
   <div class="ss-sect"><i></i><span>选 择 你 的 角 色</span><i></i></div>
@@ -298,7 +301,7 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
 <!-- ========== 对局界面 ========== -->
 <div id="game-screen" class="hidden">
   <header id="topbar">
-    <div class="logo-mini"><img data-src="assets/img/logo_mini.svg" alt="富贵人生" draggable="false"></div>
+    <div class="logo-mini"><img data-src="assets/img/logo_mini.svg?v=41" alt="富贵人生" draggable="false"></div>
     <div class="hud-chips">
       <div id="hud-round">第 1 / 30 回合</div>
       <div id="hud-season" style="display:none"></div>
@@ -335,7 +338,7 @@ window.hideBoardBoot = function () { var b = document.getElementById("board-boot
           <div id="toasts"></div>
           <div id="splash"></div>
           <div class="bc-block bc-brand">
-            <div class="bc-logo"><img data-src="assets/img/logo_title.svg" alt="富贵人生" draggable="false"></div>
+            <div class="bc-logo"><img data-src="assets/img/logo_title.svg?v=41" alt="富贵人生" draggable="false"></div>
             <div class="pot-chip"><img data-src="assets/img/ico_coin.png" alt=""><div>奖池 <b id="pot-value">$0</b></div></div>
           </div>
           <div class="bc-block bc-action">
