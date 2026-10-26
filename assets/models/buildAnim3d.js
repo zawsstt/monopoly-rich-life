@@ -36,7 +36,7 @@
     lotHalf: 1.16,           // 场地半宽（地产格 2.5，留边防穿模）
     layerH: 0.34,            // 标准层高
     pitDepth: 0.62,          // 基坑深度
-    fenceH: 0.58,            // 围挡总高（原 0.86 相对 3.0 楼体占 29%，会挡住生长中的低层）
+    fenceH: 0.42,            // 围挡总高：0.58 时会把 0.33 高的工人整体挡住，降到 0.42 露出人
     craneH: 2.9              // 塔吊高度
   };
 
@@ -383,7 +383,8 @@
       var diag = Math.sqrt(4 * scafOff * scafOff + Math.pow(layerH * 0.72, 2));
       Bscaf.box(diag, 0.02, 0.02, sx, layerH * 0.5, sz,
         { ry: ang, rz: (s % 2 ? 1 : -1) * Math.atan2(layerH * 0.72, scafOff * 2) });
-      Bnet.box(scafOff * 2, layerH * 0.78, 0.008, sx * 1.03, layerH * 0.5, sz * 1.03, { ry: ang });
+      /* 安全网只挂到层高 55%，露出上部梁柱与窗洞，避免整栋糊成绿色 */
+      Bnet.box(scafOff * 2, layerH * 0.55, 0.008, sx * 1.03, layerH * 0.30, sz * 1.03, { ry: ang });
     }
     [-1, 1].forEach(function (sd) {
       for (var k = 0; k < 3; k++) {
@@ -895,7 +896,7 @@
       var wkr = buildWorker(wd.pose);
       wkr.group.position.set(wd.x * half, 0, wd.z * half);
       wkr.group.rotation.y = Math.atan2(-wd.x, -wd.z);   // 朝向场地中心
-      wkr.group.scale.setScalar(1.9);   // 0.175 的身高在 2.3 的格子里只有 25px，放大到可辨识
+      wkr.group.scale.setScalar(2.8);   // 0.175×2.8≈0.49，明显高于 0.42 的围挡
       wkr.group.visible = false;
       wkr.phase = wi * 1.3;
       wkr.group.userData.homeX = wkr.group.position.x;
