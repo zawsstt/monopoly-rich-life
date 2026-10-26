@@ -108,56 +108,107 @@
     return MATS;
   }
 
-  /* ================= 方块批处理 ================= */
-  /* 单位立方体 + 矩阵缩放：同一 geometry 复用所有方块，细节再多也不加 drawCall */
-  var UNIT_GEO = null;
-  function unitGeo() {
-    if (!UNIT_GEO) UNIT_GEO = new THREE.BoxGeometry(1, 1, 1);
-    return UNIT_GEO;
+  /* ================= 几何批处理（方块 / 圆柱 / 球体）=================
+   * 全是方块会显得棱角重、像体素积木。这里把 Batch 扩成「同材质 × 同几何类型」分组：
+   *   box  → BoxGeometry(1,1,1)         靠 scale(w,h,d)
+   *   cyl  → CylinderGeometry(1,1,1,14) 靠 scale(r,h,r)，14 段保证轮廓圆
+   *   sph  → SphereGeometry(1,14,10)    靠 scale(r,r,r)
+   * 每组一个 InstancedMesh，drawCall 仍只随「材质×类型」增长。 */
+  var GEO = null;
+  function geoLib() {
+    if (GEO) return GEO;
+    GEO = {
+      box: new THREE.BoxGeometry(1, 1, 1),
+      cyl: new THREE.CylinderGeometry(1, 1, 1, 14, 1),
+      sph: new THREE.SphereGeometry(1, 14, 10),
+      cone: new THREE.ConeGeometry(1, 1, 12, 1)
+    };
+    return GEO;
   }
 
   function Batch(mat, opts) {
     this.mat = mat;
-    this.items = [];
+    this.g = { box: [], cyl: [], sph: [], cone: [] };
     this.cast = !opts || opts.cast !== false;
     this.receive = !opts || opts.receive !== false;
-    this.mesh = null;
+    this.meshes = [];
   }
+  Batch.prototype._push = function (type, o) {
+    this.g[type].push(o);
+    return this;
+  };
+  /* 方块 */
   Batch.prototype.box = function (w, h, d, x, y, z, o) {
-    this.items.push({
+    return this._push('box', {
       w: w, h: h, d: d, x: x, y: y, z: z,
       rx: (o && o.rx) || 0, ry: (o && o.ry) || 0, rz: (o && o.rz) || 0,
       color: (o && o.color) || null
     });
-    return this;
   };
+  /* 圆柱：半径 r（可为数组 [rx, rz] 做椭圆截面），高 h */
+  Batch.prototype.cyl = function (r, h, x, y, z, o) {
+    var rx = Array.isArray(r) ? r[0] : r;
+    var rz = Array.isArray(r) ? r[1] : r;
+    return this._push('cyl', {
+      w: rx * 2, h: h, d: rz * 2, x: x, y: y, z: z,
+      rx: (o && o.rx) || 0, ry: (o && o.ry) || 0, rz: (o && o.rz) || 0,
+      color: (o && o.color) || null
+    });
+  };
+  /* 球 / 椭球 */
+  Batch.prototype.sph = function (r, x, y, z, o) {
+    var rx = Array.isArray(r) ? r[0] : r;
+    var ry = Array.isArray(r) ? r[1] : r;
+    var rz = Array.isArray(r) ? r[2] : r;
+    return this._push('sph', {
+      w: rx * 2, h: ry * 2, d: rz * 2, x: x, y: y, z: z,
+      rx: (o && o.rx) || 0, ry: (o && o.ry) || 0, rz: (o && o.rz) || 0,
+      color: (o && o.color) || null
+    });
+  };
+  /* 圆锥（用于光锥、尖顶等） */
+  Batch.prototype.cone = function (r, h, x, y, z, o) {
+    return this._push('cone', {
+      w: r * 2, h: h, d: r * 2, x: x, y: y, z: z,
+      rx: (o && o.rx) || 0, ry: (o && o.ry) || 0, rz: (o && o.rz) || 0,
+      color: (o && o.color) || null
+    });
+  };
+
   Batch.prototype.build = function (parent) {
-    if (!this.items.length) return null;
-    var n = this.items.length;
-    var mesh = new THREE.InstancedMesh(unitGeo(), this.mat, n);
-    mesh.castShadow = this.cast;
-    mesh.receiveShadow = this.receive;
+    var L = geoLib();
+    var self = this;
     var m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler();
-    var v = new THREE.Vector3(), s = new THREE.Vector3(), col = new THREE.Color();
-    for (var i = 0; i < n; i++) {
-      var it = this.items[i];
-      e.set(it.rx, it.ry, it.rz);
-      q.setFromEuler(e);
-      v.set(it.x, it.y, it.z);
-      s.set(it.w, it.h, it.d);
-      m4.compose(v, q, s);
-      mesh.setMatrixAt(i, m4);
-      if (it.color) { col.set(it.color); mesh.setColorAt(i, col); }
-    }
-    mesh.instanceMatrix.needsUpdate = true;
-    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    if (parent) parent.add(mesh);
-    this.mesh = mesh;
-    return mesh;
+    var v = new THREE.Vector3(), sc = new THREE.Vector3(), col = new THREE.Color();
+    var out = [];
+    ['box', 'cyl', 'sph', 'cone'].forEach(function (type) {
+      var list = self.g[type];
+      if (!list.length) return;
+      var mesh = new THREE.InstancedMesh(L[type], self.mat, list.length);
+      mesh.castShadow = self.cast;
+      mesh.receiveShadow = self.receive;
+      for (var i = 0; i < list.length; i++) {
+        var it = list[i];
+        e.set(it.rx, it.ry, it.rz);
+        q.setFromEuler(e);
+        v.set(it.x, it.y, it.z);
+        sc.set(it.w, it.h, it.d);
+        m4.compose(v, q, sc);
+        mesh.setMatrixAt(i, m4);
+        if (it.color) { col.set(it.color); mesh.setColorAt(i, col); }
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      if (parent) parent.add(mesh);
+      out.push(mesh);
+    });
+    this.meshes = out;
+    return out.length ? out[0] : null;
   };
   Batch.prototype.dispose = function () {
-    if (this.mesh) { try { this.mesh.dispose(); } catch (e) { /* ignore */ } this.mesh = null; }
-    this.items.length = 0;
+    this.meshes.forEach(function (m) { try { m.dispose(); } catch (e) { /* ignore */ } });
+    this.meshes = [];
+    this.g.box.length = 0; this.g.cyl.length = 0; this.g.sph.length = 0; this.g.cone.length = 0;
   };
 
   /* =====================================================================================
@@ -518,14 +569,14 @@
     return { group: g, hook: hook, lamp: lampGroup, cone: cone, topY: topY, jibY: jibY, jibL: jibL };
   }
 
-  /* ---------- 履带式挖掘机 ----------
-   * 结构自包含：车体批直接落到 g；大臂批落到 armPivot；小臂+铲斗批落到 elbowPivot。
-   * 三个批各自独立，才能分别绕肩、绕肘旋转（这是 v1 做不出来的原因）。 */
+  /* ---------- 履带式挖掘机 v2（圆润版）----------
+   * 圆润化手法：驱动轮/导向轮/液压缸/排气管全部换圆柱；
+   * 驾驶室四角用椭球补圆；铲斗侧板改成圆柱过渡；履带端部加半圆滚轮。
+   * 结构仍为 车体 / armPivot（绕肩）/ elbowPivot（绕肘）三级。 */
   function buildExcavator() {
     var M = mats();
     var g = new THREE.Group();
 
-    /* ===== 车体 ===== */
     var body = new THREE.Group();
     body.position.y = 0.19;
     var bc = {
@@ -534,71 +585,86 @@
       warn: new Batch(M.warn), hyd: new Batch(M.hyd)
     };
 
-    /* 履带：左右各一，履带纹 + 驱动轮 + 导向轮 + 履带架 */
+    /* ===== 履带：底板 + 履带纹 + 4 个圆滚轮（圆柱横置） ===== */
     [-1, 1].forEach(function (sd) {
-      var tx = sd * 0.155;
-      bc.rubber.box(0.075, 0.055, 0.34, tx, 0.032, 0);
-      for (var t = 0; t < 5; t++) bc.rubber.box(0.085, 0.016, 0.035, tx, 0.062, -0.13 + t * 0.065);
-      [0.15, -0.15].forEach(function (wz) {
-        bc.rubber.box(0.062, 0.062, 0.062, tx, 0.036, wz);
-        bc.steelDark.box(0.03, 0.03, 0.032, tx, 0.036, wz);
+      var tx = sd * 0.152;
+      bc.rubber.box(0.072, 0.05, 0.34, tx, 0.032, 0);
+      for (var t = 0; t < 5; t++) bc.rubber.box(0.081, 0.014, 0.032, tx, 0.06, -0.13 + t * 0.065);
+      /* 驱动轮 / 导向轮 / 2 个支重轮：圆柱横放（rz=90°） */
+      [0.155, 0.06, -0.06, -0.155].forEach(function (wz, wi) {
+        var r = (wi === 0 || wi === 3) ? 0.032 : 0.026;
+        bc.rubber.cyl(r, 0.06, tx, 0.036, wz, { rz: Math.PI / 2 });
+        bc.steelDark.cyl(r * 0.5, 0.064, tx, 0.036, wz, { rz: Math.PI / 2 });
       });
-      bc.steelDark.box(0.03, 0.03, 0.3, tx, 0.07, 0);
+      bc.steelDark.box(0.028, 0.026, 0.29, tx, 0.068, 0);
     });
-    /* 底盘 + 回转齿圈 */
-    bc.steelDark.box(0.3, 0.035, 0.26, 0, 0.082, 0);
-    bc.machYellow.box(0.33, 0.07, 0.29, 0, 0.13, 0);
-    bc.steelDark.box(0.12, 0.026, 0.12, 0, 0.173, 0);
 
-    /* 上车体：机舱 + 配重 + 散热格栅 */
-    bc.machYellow.box(0.26, 0.12, 0.22, -0.03, 0.06, 0);
-    bc.machYellow.box(0.1, 0.1, 0.2, -0.17, 0.055, 0);
-    bc.steelDark.box(0.11, 0.012, 0.21, -0.17, 0.108, 0);
-    for (var gr = 0; gr < 3; gr++) bc.steelDark.box(0.008, 0.07, 0.18, 0.075, 0.06, 0);
-    /* 驾驶室：框 + 前后侧玻璃 + 顶盖 + 顶灯 + 排气管 */
-    bc.machYellow.box(0.115, 0.135, 0.13, 0.055, 0.075, 0.075);
-    bc.glassDark.box(0.095, 0.105, 0.012, 0.055, 0.082, 0.142);
-    bc.glassDark.box(0.012, 0.105, 0.1, 0.113, 0.082, 0.075);
-    bc.glassDark.box(0.012, 0.09, 0.09, -0.003, 0.082, 0.075);
-    bc.steelDark.box(0.125, 0.014, 0.14, 0.055, 0.148, 0.075);
-    bc.warn.box(0.024, 0.02, 0.024, 0.02, 0.162, 0.09);
-    bc.steelDark.box(0.02, 0.05, 0.02, 0.055, 0.175, 0.05);
+    /* ===== 底盘 + 回转齿圈 ===== */
+    bc.steelDark.box(0.29, 0.032, 0.25, 0, 0.082, 0);
+    bc.machYellow.box(0.315, 0.068, 0.275, 0, 0.128, 0);
+    bc.steelDark.cyl(0.058, 0.03, 0, 0.172, 0);                    // 回转齿圈（圆柱）
+
+    /* ===== 上车体：机舱（带圆角）+ 配重（半圆尾）+ 格栅 ===== */
+    bc.machYellow.box(0.25, 0.115, 0.21, -0.03, 0.058, 0);
+    /* 机舱四角补圆（椭球） */
+    [[-0.155, 0.105], [0.095, 0.105], [-0.155, -0.105], [0.095, -0.105]].forEach(function (q) {
+      bc.machYellow.cyl(0.018, 0.115, -0.03 + q[0], 0.058, q[1]);
+    });
+    /* 尾部配重：半圆柱（用圆柱横放 + 只露半截） */
+    bc.machYellow.cyl(0.062, 0.19, -0.155, 0.058, 0, { rz: Math.PI / 2 });
+    bc.steelDark.cyl(0.064, 0.05, -0.155, 0.108, 0, { rz: Math.PI / 2 });
+    /* 散热格栅 */
+    for (var gr = 0; gr < 4; gr++) bc.steelDark.box(0.006, 0.068, 0.17, 0.072 + gr * 0.008, 0.058, 0);
+
+    /* ===== 驾驶室：圆角箱 + 三面玻璃 + 顶盖 + 顶灯 + 排气 ===== */
+    bc.machYellow.box(0.112, 0.132, 0.126, 0.052, 0.074, 0.072);
+    [[0.108, 0.135], [0.108, 0.009], [-0.004, 0.135], [-0.004, 0.009]].forEach(function (q) {
+      bc.machYellow.cyl(0.014, 0.132, q[0], 0.074, q[1]);
+    });
+    bc.glassDark.box(0.092, 0.1, 0.01, 0.052, 0.08, 0.137);
+    bc.glassDark.box(0.01, 0.1, 0.096, 0.109, 0.08, 0.072);
+    bc.glassDark.box(0.01, 0.086, 0.086, -0.005, 0.08, 0.072);
+    bc.steelDark.box(0.12, 0.012, 0.134, 0.052, 0.145, 0.072);
+    bc.warn.cyl(0.011, 0.016, 0.016, 0.158, 0.086);                // 顶灯（圆柱）
+    bc.steelDark.cyl(0.009, 0.05, 0.052, 0.175, 0.048);            // 排气管（圆柱）
 
     Object.keys(bc).forEach(function (k) { bc[k].build(body); });
     g.add(body);
 
-    /* ===== 大臂（绕肩） ===== */
+    /* ===== 大臂（绕肩）===== */
     var armPivot = new THREE.Group();
-    armPivot.position.set(0.02, 0.235, 0.06);
+    armPivot.position.set(0.018, 0.232, 0.058);
     var ab = { machYellow: new Batch(M.machYellow), steelDark: new Batch(M.steelDark), hyd: new Batch(M.hyd) };
-    /* 近段陡（-0.62rad），远段平（+0.22rad），两段折线 */
-    ab.machYellow.box(0.05, 0.055, 0.19, 0, 0.02, 0.09, { rx: -0.62 });
-    ab.machYellow.box(0.045, 0.05, 0.15, 0, 0.115, 0.216, { rx: 0.22 });
-    for (var aw = 0; aw < 3; aw++) ab.steelDark.box(0.052, 0.008, 0.012, 0, 0.02 + aw * 0.028, 0.048 + aw * 0.036, { rx: -0.62 });
-    ab.hyd.box(0.022, 0.022, 0.12, 0.03, 0.06, 0.09, { rx: -0.55 });
-    ab.hyd.box(0.014, 0.014, 0.09, 0.03, 0.125, 0.19, { rx: 0.2 });
+    /* 大臂：主段 + 折线段，圆角用椭球过渡 */
+    ab.machYellow.box(0.046, 0.05, 0.185, 0, 0.018, 0.088, { rx: -0.62 });
+    ab.machYellow.cyl([0.025, 0.024], 0.08, 0, 0.055, 0.135, { rx: -0.62 });
+    ab.machYellow.box(0.042, 0.046, 0.145, 0, 0.112, 0.212, { rx: 0.22 });
+    ab.steelDark.cyl(0.026, 0.05, 0, 0.018, 0.088, { rx: -0.62 });
+    /* 液压缸：缸体（粗圆柱）+ 活塞杆（细圆柱） */
+    ab.hyd.cyl(0.011, 0.115, 0.028, 0.058, 0.088, { rx: -0.55 });
+    ab.hyd.cyl(0.0065, 0.095, 0.028, 0.122, 0.188, { rx: 0.2 });
     Object.keys(ab).forEach(function (k) { ab[k].build(armPivot); });
 
-    /* ===== 小臂 + 铲斗（绕肘） ===== */
+    /* ===== 小臂 + 铲斗（绕肘）===== */
     var elbowPivot = new THREE.Group();
-    elbowPivot.position.set(0, 0.14, 0.235);
+    elbowPivot.position.set(0, 0.138, 0.232);
     var sb = { machYellow: new Batch(M.machYellow), steelDark: new Batch(M.steelDark), hyd: new Batch(M.hyd) };
-    sb.machYellow.box(0.042, 0.042, 0.2, 0, -0.06, 0.09, { rx: 0.5 });
-    sb.hyd.box(0.016, 0.016, 0.08, 0.026, -0.02, 0.06, { rx: 0.5 });
-    /* 铲斗：斗体 + 底板 + 4 斗齿 + 两侧板 */
-    sb.steelDark.box(0.11, 0.085, 0.075, 0, -0.13, 0.19);
-    sb.steelDark.box(0.108, 0.02, 0.03, 0, -0.175, 0.245, { rx: 0.5 });
-    for (var bt = 0; bt < 4; bt++) sb.steelDark.box(0.018, 0.02, 0.03, -0.038 + bt * 0.025, -0.18, 0.262);
-    sb.steelDark.box(0.012, 0.07, 0.06, 0.055, -0.13, 0.19);
-    sb.steelDark.box(0.012, 0.07, 0.06, -0.055, -0.13, 0.19);
+    sb.machYellow.cyl([0.021, 0.021], 0.195, 0, -0.058, 0.088, { rx: 0.5 });
+    sb.hyd.cyl(0.008, 0.075, 0.024, -0.02, 0.058, { rx: 0.5 });
+    /* 铲斗：斗体（圆底）+ 侧板（圆柱）+ 4 斗齿 */
+    sb.steelDark.box(0.104, 0.078, 0.07, 0, -0.128, 0.188);
+    sb.steelDark.cyl(0.035, 0.104, 0, -0.162, 0.205, { rz: Math.PI / 2 });   // 斗底圆弧
+    sb.steelDark.box(0.1, 0.018, 0.028, 0, -0.172, 0.24, { rx: 0.5 });
+    for (var bt = 0; bt < 4; bt++) sb.steelDark.cyl(0.008, 0.026, -0.036 + bt * 0.024, -0.178, 0.256, { rx: 0.5 });
+    sb.steelDark.cyl(0.03, 0.01, 0.052, -0.128, 0.188, { rz: Math.PI / 2 });
+    sb.steelDark.cyl(0.03, 0.01, -0.052, -0.128, 0.188, { rz: Math.PI / 2 });
     Object.keys(sb).forEach(function (k) { sb[k].build(elbowPivot); });
 
     armPivot.add(elbowPivot);
     body.add(armPivot);
     g.add(body);
 
-    return { group: g, body: body, armPivot: armPivot, elbowPivot: elbowPivot,
-             batches: [bc, ab, sb] };
+    return { group: g, body: body, armPivot: armPivot, elbowPivot: elbowPivot, batches: [bc, ab, sb] };
   }
 
   /* ---------- 自卸渣土车 ---------- */
@@ -614,25 +680,33 @@
     /* 车架 */
     tb.steelDark.box(0.16, 0.035, 0.62, 0, 0.075, 0);
     /* 驾驶室 + 前挡 + 双侧窗 + 车顶 + 顶灯 */
-    tb.machRed.box(0.15, 0.14, 0.15, 0, 0.165, 0.22);
+    tb.machRed.box(0.146, 0.138, 0.146, 0, 0.165, 0.22);
+    [[0.072, 0.292], [0.072, 0.148], [-0.072, 0.292], [-0.072, 0.148]].forEach(function (q) {
+      tb.machRed.cyl(0.016, 0.138, q[0], 0.165, q[1]);
+    });
     tb.glassDark.box(0.125, 0.075, 0.012, 0, 0.185, 0.297);
     tb.glassDark.box(0.012, 0.065, 0.1, 0.077, 0.185, 0.22);
     tb.glassDark.box(0.012, 0.065, 0.1, -0.077, 0.185, 0.22);
     tb.machRed.box(0.155, 0.016, 0.16, 0, 0.243, 0.22);
-    tb.warn.box(0.03, 0.02, 0.03, 0, 0.256, 0.19);
+    tb.warn.cyl(0.014, 0.02, 0, 0.256, 0.19);
     /* 引擎盖 + 格栅 + 双大灯 + 保险杠 */
     tb.machRed.box(0.14, 0.09, 0.1, 0, 0.135, 0.33);
     for (var cg = 0; cg < 3; cg++) tb.steelDark.box(0.12, 0.008, 0.012, 0, 0.15 + cg * 0.022, 0.382);
-    tb.warn.box(0.03, 0.022, 0.014, -0.05, 0.12, 0.383);
-    tb.warn.box(0.03, 0.022, 0.014, 0.05, 0.12, 0.383);
+    tb.warn.cyl(0.015, 0.014, -0.05, 0.12, 0.383, { rx: Math.PI / 2 });
+    tb.warn.cyl(0.015, 0.014, 0.05, 0.12, 0.383, { rx: Math.PI / 2 });
     tb.steelDark.box(0.155, 0.026, 0.02, 0, 0.085, 0.39);
 
     /* 6 轮（前 1 轴 2 轮，后 2 轴 4 轮）+ 轮毂 + 挡泥板 */
+    /* 6 轮：橡胶胎用圆柱横放（rz=90°），轮毂再叠一层小圆柱，比方块轮胎真实得多 */
     [0.27, -0.13, -0.24].forEach(function (wz) {
       [-1, 1].forEach(function (sd) {
-        var wx = sd * 0.093;
-        tb.rubber.box(0.036, 0.088, 0.088, wx, 0.044, wz);
-        tb.steelDark.box(0.04, 0.042, 0.042, wx, 0.044, wz);
+        var wx = sd * 0.092;
+        tb.rubber.cyl(0.044, 0.036, wx, 0.044, wz, { rz: Math.PI / 2 });
+        tb.steelDark.cyl(0.024, 0.04, wx, 0.044, wz, { rz: Math.PI / 2 });
+        /* 轮辐 3 根（细圆柱横放） */
+        for (var sp = 0; sp < 3; sp++) {
+          tb.steelDark.box(0.042, 0.006, 0.006, wx, 0.044, wz, { rx: sp * 1.05 });
+        }
       });
     });
     [-0.13, -0.24].forEach(function (wz) { tb.steelDark.box(0.2, 0.012, 0.1, 0, 0.098, wz); });
@@ -663,9 +737,10 @@
     return { group: g, bed: bed, batches: [tb, bb] };
   }
 
-  /* ---------- 体素工人（约 18 件：安全帽/头/背心+反光条/双臂/双手/双腿/靴）----------
-   * 四肢拆成独立 pivot，才能摆出蹲、搬、指挥、弯腰、巡逻等不同姿态。
-   * pose 决定初始关节角度，动作由 tick 里的微动叠加。 */
+  /* ---------- 工人 v2（圆润版）----------
+   * v1 全是方块：头是方盒、四肢是方条，像积木人。
+   * v2 换几何：头/手/靴用球体（椭球），躯干/四肢用圆柱（14 段），安全帽用扁球 + 扁圆帽檐。
+   * 关节仍拆 pivot，姿态逻辑不变。 */
   function buildWorker(pose) {
     var M = mats();
     var g = new THREE.Group();
@@ -676,70 +751,75 @@
       rubber: new Batch(M.rubber), steelDark: new Batch(M.steelDark)
     };
 
-    var H = 0.175;             // 总身高
-    var legH = 0.058, torsoH = 0.062, headH = 0.042;
+    var legH = 0.056, torsoH = 0.060, headR = 0.020;
 
-    /* 躯干（反光背心 + 两道银色反光条 + 下摆） */
+    /* 躯干：椭圆截面圆柱（前后略扁，符合人体） */
     var ty = legH + torsoH / 2;
-    B.vest.box(0.056, torsoH, 0.032, 0, ty, 0);
-    B.steelDark.box(0.058, 0.007, 0.034, 0, ty + torsoH * 0.18, 0);
-    B.steelDark.box(0.058, 0.007, 0.034, 0, ty - torsoH * 0.12, 0);
-    B.cloth.box(0.058, 0.008, 0.034, 0, legH + 0.004, 0);   // 腰带
+    B.vest.cyl([0.027, 0.017], torsoH, 0, ty, 0);
+    /* 反光条：两道薄圆环（略大于躯干半径） */
+    B.steelDark.cyl([0.0278, 0.0178], 0.007, 0, ty + torsoH * 0.20, 0);
+    B.steelDark.cyl([0.0278, 0.0178], 0.007, 0, ty - torsoH * 0.14, 0);
+    /* 腰带 */
+    B.cloth.cyl([0.0275, 0.0175], 0.008, 0, legH + 0.004, 0);
+    /* 肩部圆角（两颗小球，让肩线不那么直角） */
+    B.vest.sph(0.0125, 0.024, legH + torsoH - 0.006, 0);
+    B.vest.sph(0.0125, -0.024, legH + torsoH - 0.006, 0);
 
-    /* 头 + 安全帽（帽体 + 帽檐 + 帽脊） */
-    var hy = legH + torsoH + headH / 2 + 0.002;
-    B.skin.box(0.034, headH, 0.032, 0, hy, 0);
-    B.helmet.box(0.038, 0.016, 0.036, 0, hy + headH / 2 + 0.006, 0);
-    B.helmet.box(0.044, 0.005, 0.024, 0, hy + headH / 2 - 0.002, 0.012);   // 帽檐
-    B.helmet.box(0.008, 0.006, 0.036, 0, hy + headH / 2 + 0.014, 0);       // 帽脊
+    /* 头：椭球 + 下巴收窄；安全帽：扁球 + 扁圆帽檐 + 帽脊 */
+    var hy = legH + torsoH + headR + 0.002;
+    B.skin.sph([0.0175, 0.0195, 0.0175], 0, hy, 0);
+    B.skin.sph([0.012, 0.010, 0.012], 0, hy - 0.017, 0.002);          // 下巴
+    B.helmet.sph([0.0195, 0.0135, 0.0195], 0, hy + 0.010, 0);          // 帽壳
+    B.helmet.cyl([0.0225, 0.0225], 0.0035, 0, hy + 0.005, 0.008);      // 帽檐（扁圆）
+    B.helmet.box(0.007, 0.005, 0.032, 0, hy + 0.018, 0);               // 帽脊
 
     B.helmet.build(g); B.skin.build(g); B.vest.build(g);
     B.cloth.build(g); B.rubber.build(g); B.steelDark.build(g);
 
-    /* 手臂 pivot：肩在躯干上沿两侧 */
+    /* 手臂 pivot：肩点略向内收，圆柱肢体 + 球形手 */
     function makeArm(sd) {
       var pv = new THREE.Group();
-      pv.position.set(sd * 0.03, legH + torsoH - 0.008, 0);
-      var ab = { cloth: new Batch(M.cloth), skin: new Batch(M.skin) };
-      /* 上臂 + 前臂（一段式，靠 pivot 转角表现） */
-      ab.cloth.box(0.014, 0.05, 0.014, 0, -0.025, 0);
-      ab.skin.box(0.015, 0.014, 0.015, 0, -0.055, 0);
+      pv.position.set(sd * 0.026, legH + torsoH - 0.010, 0);
+      var ab = { cloth: new Batch(M.cloth), skin: new Batch(M.skin), vest: new Batch(M.vest) };
+      ab.vest.sph(0.0105, 0, 0, 0);                                     // 肩头球（补圆）
+      ab.cloth.cyl(0.0078, 0.048, 0, -0.026, 0);                        // 上臂+前臂一体
+      ab.skin.sph(0.0085, 0, -0.052, 0);                                // 手
       Object.keys(ab).forEach(function (k) { ab[k].build(pv); });
       g.add(pv);
       return pv;
     }
     var armL = makeArm(-1), armR = makeArm(1);
 
-    /* 腿 pivot：腿的方块必须建在 pivot 内部，否则 pivot 是空组、转动无效 */
+    /* 腿 pivot：圆柱腿 + 椭球靴 */
     function makeLeg(sd) {
       var pv = new THREE.Group();
-      pv.position.set(sd * 0.014, legH, 0);
+      pv.position.set(sd * 0.013, legH, 0);
       var lb = { cloth: new Batch(M.cloth), rubber: new Batch(M.rubber) };
-      lb.cloth.box(0.019, legH, 0.019, 0, -legH / 2, 0);
-      lb.rubber.box(0.022, 0.014, 0.03, 0, -legH + 0.007, 0.004);
+      lb.cloth.cyl(0.0095, legH, 0, -legH / 2, 0);
+      lb.rubber.sph([0.0115, 0.0075, 0.017], 0, -legH + 0.007, 0.004); // 靴
       Object.keys(lb).forEach(function (k) { lb[k].build(pv); });
       g.add(pv);
       return pv;
     }
     var legL = makeLeg(-1), legR = makeLeg(1);
 
-    /* 按姿态设定初始关节角 */
+    /* 姿态（与 v1 一致，只是几何圆润了） */
     var P = {
-      bind:   { armL: -1.1, armR: -1.1, legBend: 0.9, crouch: -0.055 },   // 蹲着绑钢筋
-      carry:  { armL: -1.5, armR: -1.5, legBend: 0, crouch: 0 },          // 双手前抱
-      signal: { armL: 0.2, armR: -2.6, legBend: 0, crouch: 0 },           // 一手高举指挥
-      work:   { armL: -0.8, armR: -1.2, legBend: 0.3, crouch: -0.02 },    // 弯腰操作
-      patrol: { armL: 0.3, armR: -0.3, legBend: 0, crouch: 0 }            // 站立巡逻
+      bind:   { armL: -1.1, armR: -1.1, legBend: 0.9, crouch: -0.055 },
+      carry:  { armL: -1.5, armR: -1.5, legBend: 0, crouch: 0 },
+      signal: { armL: 0.2, armR: -2.6, legBend: 0, crouch: 0 },
+      work:   { armL: -0.8, armR: -1.2, legBend: 0.3, crouch: -0.02 },
+      patrol: { armL: 0.3, armR: -0.3, legBend: 0, crouch: 0 }
     }[pose] || { armL: 0, armR: 0, legBend: 0, crouch: 0 };
 
     armL.rotation.x = P.armL;
     armR.rotation.x = P.armR;
-    g.position.y = P.crouch;        // 蹲姿整体下沉
+    g.position.y = P.crouch;
     g.userData.pose = pose || 'patrol';
     g.userData.baseY = P.crouch;
     g.userData.legBend = P.legBend;
 
-    return { group: g, armL: armL, armR: armR, legL: legL, legR: legR, H: H };
+    return { group: g, armL: armL, armR: armR, legL: legL, legR: legR, H: legH + torsoH + headR * 2 };
   }
 
   /* ---------- 尘土粒子（Points + 自定义 shader，1 drawCall）---------- */
