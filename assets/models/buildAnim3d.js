@@ -995,21 +995,6 @@
     crane.group.visible = false;
     root.add(crane.group);
 
-    /* ---- 工程机械：挖掘机（坑边作业）+ 渣土车（等装） ---- */
-    var ex = buildExcavator();
-    ex.group.position.set(half * 0.66, 0, half * 0.58);
-    ex.group.rotation.y = -PI * 0.72;              // 臂朝向基坑
-    ex.group.scale.setScalar(1.45);                // 0.4 宽的挖机在 2.3 的格子里太小，放大到可读
-    ex.group.visible = false;
-    root.add(ex.group);
-
-    var truck = buildDumpTruck();
-    truck.group.position.set(-half * 0.66, 0, half * 0.50);
-    truck.group.rotation.y = PI * 0.62;            // 车头朝挖掘机
-    truck.group.scale.setScalar(1.35);
-    truck.group.visible = false;
-    root.add(truck.group);
-
     /* ---- 尘土：挖掘点 / 卸料点 / 场地弥漫，各 1 个 Points ---- */
     var dusts = [];
     function addDust(x, z, cnt, spread, hgt) {
