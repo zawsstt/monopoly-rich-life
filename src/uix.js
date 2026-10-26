@@ -1204,10 +1204,25 @@ const ui = (() => {
 
   function showDeed(i) {
     SFX.hover();
+    /* 拥有者点自己的地产 → 多一个「重播建造」入口（不扣钱、不改等级，纯回看） */
+    const st = (typeof G !== 'undefined' && G && G.tiles) ? G.tiles[i] : null;
+    const bt = BOARD[i];
+    const canReplay = !!(st && bt && bt.type === 'prop' && st.owner === 0 && st.level > 0 &&
+                        window.V3D && typeof window.V3D.replayBuildAnim === 'function' &&
+                        window.BuildAnim3D && window.BuildAnim3D.isEnabled());
     const m = buildModal(`
       <div class="deed">${deedHTML(i)}</div>
-      <div class="m-actions center"><button class="btn btn-ghost">关闭</button></div>`, 'nomax');
-    $('.m-actions .btn', m.el).onclick = () => m.close();
+      <div class="m-actions center">
+        ${canReplay ? '<button class="btn btn-primary" id="deed-replay">🏗 重播建造</button>' : ''}
+        <button class="btn btn-ghost" id="deed-close">关闭</button>
+      </div>`, 'nomax');
+    $('#deed-close', m.el).onclick = () => m.close();
+    if (canReplay) {
+      $('#deed-replay', m.el).onclick = () => {
+        m.close();
+        try { window.V3D.replayBuildAnim(i); } catch (e) { /* ignore */ }
+      };
+    }
     m.el.addEventListener('click', (e) => { if (e.target === m.el) m.close(); });
   }
 

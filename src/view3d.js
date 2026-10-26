@@ -821,6 +821,11 @@ const V3D = (() => {
 
     /* 低端设备开局即降级（不等掉帧）：关窗景，收益最大且不影响玩法 */
     try { prefLightenOnLowEnd(); } catch (e) { /* ignore */ }
+
+    /* 建筑升级工地动画：把主场景交给动画模块（动画组直接挂在 scene 上，用完自销毁） */
+    try {
+      if (window.BuildAnim3D) BuildAnim3D.setScene(scene);
+    } catch (e) { window.__errs && window.__errs.push('buildAnim bind: ' + e.message); }
   }
 
   /* ---------- 静态几何合并（按材质 + 阴影设置分组，顶点烘进世界矩阵）----------
@@ -1813,6 +1818,49 @@ const V3D = (() => {
     } catch (e) { window.__errs && window.__errs.push('view3d property ' + i + ': ' + e.message); }
     shadowDirty();
   }
+  /* ---------- 升级工地动画对外接口 ----------
+   * hideTileBuilding：先把旧模型藏掉（否则会与工地动画同时出现，视觉打架）
+   * playBuildAnim：在格子原地播放 12s 工地演出，结束时才换成新等级模型。
+   * 全程不阻塞对局——调用后立即返回。 */
+  function hideTileBuilding(i) {
+    const b = buildings[i];
+    if (b && b.group) b.group.visible = false;
+  }
+  function playBuildAnim(i, level) {
+    const st = (typeof G !== 'undefined' && G && G.tiles) ? G.tiles[i] : null;
+    if (!window.BuildAnim3D || !BuildAnim3D.isEnabled()) { updateTile(i); return false; }
+    const t = BOARD[i];
+    if (!t || t.type !== 'prop') { updateTile(i); return false; }
+    const w = worldOf(i);
+    /* 目标楼高按等级：与 props3d 的高度规范对齐（lv1 0.8-1.2 / lv4 2.3-3.0） */
+    const H = [1.05, 1.55, 2.10, 2.85][Math.max(0, Math.min(3, (level | 0) - 1))];
+    BuildAnim3D.play({
+      tileIdx: i,
+      x: w.x, y: TILE_TOP, z: w.z,
+      rot: sideRotY(i) + (SPECIAL_YAW[i] || 0),
+      targetHeight: H,
+      onDone: () => {
+        try {
+          updateTile(i);
+          /* 重建后强制可见：hideTileBuilding 曾把它设成 false，某些路径（残留引用）会带着 false 重建 */
+          const b = buildings[i];
+          if (b && b.group) b.group.visible = true;
+        } catch (e) { window.__errs && window.__errs.push('playBuildAnim onDone: ' + (e && e.message)); }
+      }
+    });
+    return true;
+  }
+
+  /* 点击回看：拥有者点自己的地产可重播建造过程（不扣钱、不改等级）。
+   * 与升级共用同一套接口，播完自动恢复当前等级模型。 */
+  function replayBuildAnim(i) {
+    const st = (typeof G !== 'undefined' && G && G.tiles) ? G.tiles[i] : null;
+    const t = BOARD[i];
+    if (!st || !t || t.type !== 'prop' || st.owner == null || st.level <= 0) return false;
+    hideTileBuilding(i);
+    return playBuildAnim(i, st.level);
+  }
+
   function syncLucky() {
     const idx = (typeof G !== 'undefined' && G) ? G.luckyTile : -1;
     if (idx === luckyIdx) return;
@@ -2907,6 +2955,9 @@ const V3D = (() => {
           animToken(rig, dt, worldT);
         }
       }
+
+      /* 建筑升级工地动画：独立 fire-and-forget，不参与回合流程 */
+      if (window.BuildAnim3D) { try { BuildAnim3D.tick(dt); } catch (e) { /* ignore */ } }
       /* 骑乘同步 */
       for (const [, rig] of tokens) {
         const ride = rig.ride;
@@ -3019,6 +3070,13 @@ const V3D = (() => {
 
       applyKeyboardCam(dt);   /* 键盘辅助镜头（WASD/方向键） */
       if (controls && !followDriving) controls.update(dt);
+      /* 验收用机位锁：外部写 window.__camLock 即在每帧末覆盖相机（正常玩法不会设置它） */
+      if (window.__camLock) {
+        var LC = window.__camLock;
+        camera.position.set(LC.px, LC.py, LC.pz);
+        camera.lookAt(LC.tx, LC.ty, LC.tz);
+        if (controls) controls.target.set(LC.tx, LC.ty, LC.tz);
+      }
       /* 跟随/骑乘时相机最低高度 > 沿途建筑最高（~3.0）：低仰角自由轨道也不把镜头压进建筑/地砖内部 */
       if (followActive && camera.position.y < FOLLOW_MIN_Y) camera.position.y = FOLLOW_MIN_Y;
       perfTick(dt);           /* FPS 滑动均值采样 → 持续低帧自动降档（只采真正渲染的帧） */
@@ -3151,6 +3209,7 @@ const V3D = (() => {
     init, show,
     initGameScene, updateTileAll, flushPending,
     moveToken, removeToken, updateTile, rebuildBlocks, rollDice, resize,
+    hideTileBuilding, playBuildAnim, replayBuildAnim,
     flashTile, tileFx, fireworkAtTile, setActive, setPhase,
     rideStart, rideEnd, setTokenHidden, moneyFloat, floatAt,
     focusOn, focusTile, focusDefault, flyoverIntro,

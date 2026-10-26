@@ -725,7 +725,19 @@ async function resolveTile(gid, player, depth, viaCard) {
             if (gid !== G.gameId || !player.alive) return;
             st.level++;
             if (G.stats) { G.stats[player.idx].upgrades++; if (st.level >= CFG.MAX_LEVEL) G.stats[player.idx].lv4++; }
-            ui.updateTile(idx);
+            /* 升级动画：先把旧模型藏掉，在该格原地播 12s 工地演出，结束才换新模型。
+             * 全程不等待——玩家可以继续掷骰/买卖，动画自己跑完。 */
+            (function () {
+              const V = window.V3D;
+              if (V && typeof V.playBuildAnim === 'function') {
+                try { V.hideTileBuilding(idx); } catch (e) { /* ignore */ }
+                let played = false;
+                try { played = V.playBuildAnim(idx, st.level); } catch (e) { played = false; }
+                if (!played) ui.updateTile(idx);
+              } else {
+                ui.updateTile(idx);
+              }
+            })();
             ui.tileFx(idx, 'up');
             ui.fireworkAtTile(idx);
             if (st.level >= CFG.MAX_LEVEL) milestone('castle', `${pname(player)} 的 ${t.name} 城堡落成`);
