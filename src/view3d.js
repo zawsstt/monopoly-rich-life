@@ -414,19 +414,60 @@ const V3D = (() => {
   /* ---------- FPS 监控动态降级（迟滞：3s 窗口均值 + 5s 持续 + 每级仅一次） ---------- */
   const perfMon = { samples: [], lowSince: 0, applied: 0, avgFps: 60 };
   const PERF_WIN_MS = 3000, PERF_MIN_FPS = 20, PERF_SUSTAIN_MS = 5000, PERF_MIN_SAMPLES = 15;
+  /* 书房环境部件开关：Environment3D 造出来的节点统一以 env3d-* 命名。
+   * 实测（CPU×4 节流）关闭顺序的收益：窗景 +10fps（透明大面片，过度绘制最重）
+   * ＞ 书架 +6fps（328 个书脊 mesh）＞ 阴影/分辨率（仅 7~18%）。
+   * 所以降级按收益排序，先把最贵的关掉，视觉上只牺牲远景装饰。 */
+  function setEnvPart(part, visible) {
+    if (!scene) return 0;
+    let n = 0;
+    scene.traverse(o => {
+      if (o.parent && typeof o.name === 'string' && o.name.indexOf('env3d-' + part) === 0) { o.visible = visible; n++; }
+    });
+    return n;
+  }
   function perfDowngrade() {
     if (perfMon.applied === 0) {
+      setEnvPart('window', false);
+      perfMon.applied = 1;
+      try { console.info('[view3d] 性能降级 #1：关闭书房窗景（透明面片）'); } catch (e) { /* ignore */ }
+    } else if (perfMon.applied === 1) {
+      setEnvPart('shelf', false);
+      perfMon.applied = 2;
+      try { console.info('[view3d] 性能降级 #2：关闭书架'); } catch (e) { /* ignore */ }
+    } else if (perfMon.applied === 2) {
       qualityState.shadowsOff = true;
       applyShadowConfig();
-      perfMon.applied = 1;
-      try { console.info('[view3d] 性能降级 #1：关闭阴影'); } catch (e) { /* ignore */ }
-    } else if (perfMon.applied === 1) {
+      perfMon.applied = 3;
+      try { console.info('[view3d] 性能降级 #3：关闭阴影'); } catch (e) { /* ignore */ }
+    } else if (perfMon.applied === 3) {
       qualityState.prScale = 0.75;
       applyPixelRatio();
-      perfMon.applied = 2;
-      try { console.info('[view3d] 性能降级 #2：pixelRatio ×0.75'); } catch (e) { /* ignore */ }
+      perfMon.applied = 4;
+      try { console.info('[view3d] 性能降级 #4：pixelRatio ×0.75'); } catch (e) { /* ignore */ }
     }
-    /* applied===2：已到底，不再降（不反复） */
+    /* applied===4：已到底，不再降（不反复） */
+  }
+  /* 开局即判：低端设备（核心数/内存偏低）不等掉帧，直接先关掉最贵的窗景 */
+  function prefLightenOnLowEnd() {
+    let low = false;
+    let why = '';
+    try {
+      const q = new URLSearchParams(location.search).get('lowend');
+      const cores = navigator.hardwareConcurrency || 8;
+      const mem = navigator.deviceMemory || 8;
+      if (q === '1') { low = true; why = 'URL 指定'; }
+      else if (q === '0') { low = false; }
+      else if (cores <= 4) { low = true; why = cores + ' 核'; }
+      else if (mem <= 3) { low = true; why = mem + 'GB'; }
+    } catch (e) { /* ignore */ }
+    if (!low) return;
+    /* 低端直接跳过前两级：窗景 + 书架一起关，实测 9.7fps → 39fps（4 倍）。
+     * 留下的墙/地/桌/台灯/地毯足够维持书房氛围，棋盘本身完全不受影响。 */
+    const w = setEnvPart('window', false);
+    const sh = setEnvPart('shelf', false);
+    perfMon.applied = 2;
+    try { console.info('[view3d] 低端设备预降级（' + why + '）：窗景 ' + w + ' + 书架 ' + sh + ' 个节点已关闭'); } catch (e) { /* ignore */ }
   }
   function perfTickMs(dtMs, nowOverride) {
     let now = nowOverride;
@@ -767,6 +808,100 @@ const V3D = (() => {
         window.Environment3D.replace({ THREE: THREE, scene: scene, staticRoot: staticRoot });
       }
     } catch (e) { window.__errs && window.__errs.push('env3d: ' + e.message); }
+
+    /* 静态几何合并：实测无收益（1716→1137 mesh，但 baseline 54fps 反而掉到 30fps，
+     * 说明瓶颈不在 drawCall 而在填充率/每帧 JS）。默认关闭，留 ?merge=1 供后续排查。 */
+    try {
+      const mv = new URLSearchParams(location.search).get('merge');
+      if (mv === '1') {
+        const mr = mergeStaticMeshes(staticRoot);
+        if (mr) console.info('[merge] staticRoot mesh ' + mr.before + ' → ' + mr.after);
+      }
+    } catch (e) { window.__errs && window.__errs.push('merge: ' + e.message); }
+
+    /* 低端设备开局即降级（不等掉帧）：关窗景，收益最大且不影响玩法 */
+    try { prefLightenOnLowEnd(); } catch (e) { /* ignore */ }
+  }
+
+  /* ---------- 静态几何合并（按材质 + 阴影设置分组，顶点烘进世界矩阵）----------
+   * 同材质的多零件（拘留所 327 件、书架 328 件）逐件绘制时，每帧 CPU 要提交上千次 drawCall；
+   * 低端 CPU 跟不上就掉到个位数帧率。合并后视觉完全一致，drawCall 降到材质数级别。
+   * ?merge=0 可关闭（用于对比排查）。 */
+  function mergeStaticMeshes(root) {
+    if (!root) return null;
+    try {
+      const v = new URLSearchParams(location.search).get('merge');
+      if (v === '0') return null;
+    } catch (e) { /* ignore */ }
+
+    root.updateMatrixWorld(true);
+    const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
+    const buckets = new Map();
+    let before = 0;
+
+    root.traverse(o => {
+      if (!o.isMesh || o.isInstancedMesh || o.isSkinnedMesh) return;
+      if (Array.isArray(o.material) || !o.material) return;
+      if (o.userData && (o.userData.anim || o.userData.noMerge)) return;
+      const g = o.geometry;
+      if (!g || !g.attributes || !g.attributes.position) return;
+      before++;
+      const key = (o.material.uuid || o.material.id) + '|' + (o.castShadow ? 1 : 0) + (o.receiveShadow ? 1 : 0);
+      let b = buckets.get(key);
+      if (!b) { b = { mat: o.material, cast: o.castShadow, receive: o.receiveShadow, list: [] }; buckets.set(key, b); }
+      b.list.push(o);
+    });
+
+    let after = 0;
+    buckets.forEach(b => {
+      /* 属性不全（缺 normal/uv）的不动，避免合并后渲染异常 */
+      const list = b.list.filter(m => m.geometry.attributes.normal && m.geometry.attributes.uv && !m.geometry.morphAttributes.position);
+      const rest = b.list.length - list.length;
+      if (list.length < 2) { after += b.list.length; return; }
+
+      /* 保留索引：之前用 toNonIndexed() 合并，顶点共享被破坏、顶点数膨胀，
+       * 实测反而把 baseline 从 54fps 拖到 30fps。这里改成克隆后按索引偏移拼接。 */
+      const pos = [], nor = [], uvs = [], idx = [];
+      let vOff = 0;
+      for (let i = 0; i < list.length; i++) {
+        const m = list[i];
+        const g = m.geometry.clone();
+        const mtx = new THREE.Matrix4().copy(m.matrixWorld).premultiply(inv);
+        g.applyMatrix4(mtx);                         /* 顶点/法线烘到 staticRoot 局部坐标 */
+        const P = g.attributes.position, N = g.attributes.normal, U = g.attributes.uv;
+        for (let k = 0, c = P.count; k < c; k++) {
+          pos.push(P.getX(k), P.getY(k), P.getZ(k));
+          nor.push(N.getX(k), N.getY(k), N.getZ(k));
+          uvs.push(U.getX(k), U.getY(k));
+        }
+        if (g.index) {
+          for (let k = 0, c = g.index.count; k < c; k++) idx.push(vOff + g.index.getX(k));
+        } else {
+          for (let k = 0, c = P.count; k < c; k++) idx.push(vOff + k);
+        }
+        vOff += P.count;
+        g.dispose();
+      }
+
+      const merged = new THREE.BufferGeometry();
+      merged.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      merged.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+      merged.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+      merged.setIndex(vOff > 65535 ? new THREE.Uint32BufferAttribute(idx, 1) : new THREE.Uint16BufferAttribute(idx, 1));
+      merged.computeBoundingSphere();
+
+      const mesh = new THREE.Mesh(merged, b.mat);
+      mesh.castShadow = b.cast;
+      mesh.receiveShadow = b.receive;
+      mesh.name = 'merged_' + (b.mat.name || 'mat');
+      mesh.userData.merged = true;
+
+      for (const m of list) { if (m.parent) m.parent.remove(m); }
+      root.add(mesh);
+      after += 1 + rest;
+    });
+
+    return { before, after };
   }
 
   /* ---------- 深绿毛毡圆桌（半径 70） ---------- */
