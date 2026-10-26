@@ -258,8 +258,11 @@
   }
 
   /* ---------- 楼体单层（柱网 + 梁 + 楼板 + 外墙窗洞 + 核心筒）---------- */
-  function buildFloor(B, half, y, isTop) {
-    var inner = half * 0.82;   // 原 1.06 几乎占满格子，机械无处可放
+  function buildFloor(B, half, y, isTop, opt) {
+    opt = opt || {};
+    var tierW = opt.tierW != null ? opt.tierW : 1;
+    var tierOff = opt.tierOff || 0;
+    var inner = half * 0.82 * tierW;   // 原 1.06 几乎占满格子，机械无处可放；tierW 用于裙楼退台
     var slabT = 0.05;
     /* 楼板 + 边缘挑檐 */
     B.concrete.box(inner, slabT, inner, 0, y, 0);
@@ -330,6 +333,31 @@
     B.steel.box(0.028, colH, 0.028, ppx, y + colH / 2, ppz);
     for (var pcl = 0; pcl < 3; pcl++) {
       B.concreteDark.box(0.05, 0.018, 0.05, ppx, y + colH * (0.2 + pcl * 0.3), ppz);
+    }
+
+    /* 模板支撑：混凝土外墙外侧的竖向背楞 + 两道横向围檩（在建楼的标志性构造） */
+    for (var side2 = 0; side2 < 4; side2++) {
+      var ang2 = side2 * PI / 2;
+      var ox2 = Math.sin(ang2) * (inner / 2 + 0.028);
+      var oz2 = Math.cos(ang2) * (inner / 2 + 0.028);
+      var nRib = 4;
+      for (var rb2 = 0; rb2 < nRib; rb2++) {
+        var t2 = (rb2 / (nRib - 1) - 0.5) * inner * 0.82;
+        B.plank.box(0.022, colH * 0.9, 0.022,
+          ox2 + Math.cos(ang2) * t2, y + colH * 0.47, oz2 - Math.sin(ang2) * t2, { ry: ang2 });
+      }
+      /* 横向围檩 2 道 */
+      B.plank.box(inner * 0.9, 0.024, 0.026, ox2, y + colH * 0.28, oz2, { ry: ang2 });
+      B.plank.box(inner * 0.9, 0.024, 0.026, ox2, y + colH * 0.66, oz2, { ry: ang2 });
+    }
+    /* 若为最高层：竖起的钢筋束（伸出的预留钢筋，封顶前的典型形态） */
+    if (isTop) {
+      for (var sr = 0; sr < 8; sr++) {
+        var sa = (sr / 8) * PI * 2;
+        var srr = inner * 0.34;
+        B.steelDark.box(0.009, 0.075, 0.009,
+          Math.cos(sa) * srr, y + colH + 0.037, Math.sin(sa) * srr);
+      }
     }
 
     /* 屋顶设备（仅顶层）：空调机组 + 水箱 + 电梯机房 + 女儿墙 */
@@ -460,6 +488,23 @@
     Bst.build(g);
     Bdk.build(g);
 
+    /* 吊臂探照灯：灯体 + 浅黄光锥（低多边形锥面，模拟夜间照明） */
+    var lampGroup = new THREE.Group();
+    var lampMB = new Batch(mats().lamp, { cast: false, receive: false });
+    lampMB.box(0.045, 0.03, 0.045, 0, 0, 0);
+    lampMB.build(lampGroup);
+    var coneGeo = new THREE.ConeGeometry(0.11, 0.34, 8, 1, true);
+    var coneMat = new THREE.MeshBasicMaterial({
+      color: 0xffe0a0, transparent: true, opacity: 0.16,
+      side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending
+    });
+    var cone = new THREE.Mesh(coneGeo, coneMat);
+    cone.position.y = -0.18;
+    cone.rotation.x = Math.PI;
+    lampGroup.add(cone);
+    lampGroup.position.set(0, jibY - 0.02, jibL * 0.62);
+    g.add(lampGroup);
+
     /* 吊钩（独立组，随动） */
     var hook = new THREE.Group();
     var hkB = new Batch(mats().steelDark);
@@ -470,7 +515,7 @@
     hook.position.set(0, jibY - 0.05, jibL * 0.78);
     g.add(hook);
 
-    return { group: g, hook: hook, topY: topY, jibY: jibY, jibL: jibL };
+    return { group: g, hook: hook, lamp: lampGroup, cone: cone, topY: topY, jibY: jibY, jibL: jibL };
   }
 
   /* ---------- 履带式挖掘机 ----------
@@ -831,9 +876,12 @@
       var lB = {
         concrete: new Batch(M.concrete), concreteDark: new Batch(M.concreteDark),
         glassDark: new Batch(M.glassDark), fencePost: new Batch(M.fencePost),
-        steel: new Batch(M.steel), steelDark: new Batch(M.steelDark)
+        steel: new Batch(M.steel), steelDark: new Batch(M.steelDark),
+        plank: new Batch(M.plank)
       };
-      buildFloor(lB, half, 0, li === layers - 1);
+      /* 裙楼退台：低 3 层为裙楼（宽），上部塔楼收窄到 76%，制造体量层次 */
+      var isPodium = li < Math.min(3, layers - 3);
+      buildFloor(lB, half, 0, li === layers - 1, { tierW: isPodium ? 1.0 : 0.76 });
       Object.keys(lB).forEach(function (k) { lB[k].build(lg); });
       lg.position.y = li * CFG.layerH;
       lg.scale.y = 0.001;
@@ -1025,12 +1073,17 @@
       if (exOn) {
         var exIn = clamp01((p - 0.16) / 0.10);
         exg.position.x = CFG.lotHalf * 0.66 - (1 - easyOut(exIn)) * 1.0;   // 从围挡外驶入
-        /* 挖掘循环：0..1 一个完整「下探—挖—抬臂—转斗」 */
-        var cyc = ((p - 0.26) * 6.0) % 1; if (cyc < 0) cyc = 0;
-        var dip = Math.sin(cyc * PI * 2) * 0.5 + 0.5;               // 0..1
+        /* 一斗完整循环：0-0.30 下探 → 0.30-0.50 挖 → 0.50-0.78 抬臂并转向车厢 → 0.78-1 倒斗 */
+        var cyc = ((p - 0.26) / 0.20) % 1; if (cyc < 0) cyc = 0;
+        var dip, swing2;
+        if (cyc < 0.30) { dip = cyc / 0.30; swing2 = 0; }                       // 下探
+        else if (cyc < 0.50) { dip = 1; swing2 = 0; }                            // 挖
+        else if (cyc < 0.78) { dip = 1 - (cyc - 0.50) / 0.28; swing2 = (cyc - 0.50) / 0.28; }  // 抬臂+回转
+        else { dip = 1; swing2 = 1 - (cyc - 0.78) / 0.22; }                      // 回位
         inst.h.excavator.armPivot.rotation.x = -0.30 - dip * 0.42;
         inst.h.excavator.elbowPivot.rotation.x = 0.55 + dip * 0.55;
-        inst.h.excavator.body.rotation.y = Math.sin(cyc * PI * 2) * 0.06;
+        /* 上车体回转：朝坑（0）→ 朝车厢（0.9rad） */
+        inst.h.excavator.body.rotation.y = swing2 * 0.9;
       }
     }
     if (inst.h.truck) {
@@ -1041,8 +1094,10 @@
         var trIn = clamp01((p - 0.27) / 0.09);
         var trOut = clamp01((p - 0.68) / 0.12);
         trg.position.z = CFG.lotHalf * 0.50 + (1 - easyOut(trIn)) * 1.1 - easyOut(trOut) * 1.1;
-        /* 装满后车厢微微后倾卸料预备 */
-        inst.h.truck.bed.rotation.x = -0.06 * easeInOutLocal(clamp01((p - 0.60) / 0.08));
+        /* 装载进度：0.30 前空车、0.30-0.68 逐步装满（用整组轻微下沉表示）、0.68 后后倾卸料 */
+        var load = clamp01((p - 0.30) / 0.34);
+        inst.h.truck.group.position.y = -0.004 * load;
+        inst.h.truck.bed.rotation.x = -0.22 * easeInOutLocal(clamp01((p - 0.66) / 0.08));
       }
     }
 
