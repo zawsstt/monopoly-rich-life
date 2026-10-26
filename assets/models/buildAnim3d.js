@@ -1010,30 +1010,6 @@
     truck.group.visible = false;
     root.add(truck.group);
 
-    /* ---- 工人：6 个，各司其职（姿态由 pose 决定） ---- */
-    var workers = [];
-    var wDefs = [
-      { pose: 'signal', x: -0.30, z: 0.62 },   // 坑边举手指挥塔吊
-      { pose: 'bind', x: 0.46, z: -0.42 },     // 蹲着绑钢筋
-      { pose: 'carry', x: -0.56, z: -0.30 },   // 搬建材
-      { pose: 'work', x: -0.14, z: -0.64 },    // 弯腰操作工具
-      { pose: 'patrol', x: -0.72, z: 0.10 },   // 门口巡逻
-      { pose: 'carry', x: 0.22, z: 0.66 }
-    ];
-    wDefs.forEach(function (wd, wi) {
-      var wkr = buildWorker(wd.pose);
-      wkr.group.position.set(wd.x * half, 0, wd.z * half);
-      wkr.group.rotation.y = Math.atan2(-wd.x, -wd.z);   // 朝向场地中心
-      wkr.group.scale.setScalar(2.8);   // 0.175×2.8≈0.49，明显高于 0.42 的围挡
-      wkr.group.visible = false;
-      wkr.phase = wi * 1.3;
-      wkr.group.userData.homeX = wkr.group.position.x;
-      wkr.baseRotL = wkr.armL.rotation.x;
-      wkr.baseRotR = wkr.armR.rotation.x;
-      root.add(wkr.group);
-      workers.push(wkr);
-    });
-
     /* ---- 尘土：挖掘点 / 卸料点 / 场地弥漫，各 1 个 Points ---- */
     var dusts = [];
     function addDust(x, z, cnt, spread, hgt) {
@@ -1064,8 +1040,7 @@
         layers: layers,
         groundMesh: groundMesh, pitMesh: pitMesh,
         fenceGroups: fenceGroups, floorGroups: floorGroups, scafGroups: scafGroups,
-        crane: crane, lampMesh: lampMesh, excavator: ex, truck: truck,
-        workers: workers, dusts: dusts,
+        crane: crane, lampMesh: lampMesh, dusts: dusts,
         batches: { ground: groundB, pit: pitB, lamp: lampB }
       }
     };
@@ -1145,78 +1120,6 @@
       h.crane.hook.position.y = h.crane.jibY - 0.05 - Math.sin(hkP * PI) * 0.78;
     }
 
-    /* 挖掘机：2.0s 进场，之后周期性「挖—抬—卸」；渣土车 3.2s 到位、8.6s 驶离 */
-    var exOn = p > 0.16 && p < 0.86;
-    if (inst.h.excavator) {
-      var exg = inst.h.excavator.group;
-      if (exg.visible !== exOn) exg.visible = exOn;
-      if (exOn) {
-        var exIn = clamp01((p - 0.16) / 0.10);
-        exg.position.x = CFG.lotHalf * 0.66 - (1 - easyOut(exIn)) * 1.0;   // 从围挡外驶入
-        /* 一斗完整循环：0-0.30 下探 → 0.30-0.50 挖 → 0.50-0.78 抬臂并转向车厢 → 0.78-1 倒斗 */
-        var cyc = ((p - 0.26) / 0.20) % 1; if (cyc < 0) cyc = 0;
-        var dip, swing2;
-        if (cyc < 0.30) { dip = cyc / 0.30; swing2 = 0; }                       // 下探
-        else if (cyc < 0.50) { dip = 1; swing2 = 0; }                            // 挖
-        else if (cyc < 0.78) { dip = 1 - (cyc - 0.50) / 0.28; swing2 = (cyc - 0.50) / 0.28; }  // 抬臂+回转
-        else { dip = 1; swing2 = 1 - (cyc - 0.78) / 0.22; }                      // 回位
-        inst.h.excavator.armPivot.rotation.x = -0.30 - dip * 0.42;
-        inst.h.excavator.elbowPivot.rotation.x = 0.55 + dip * 0.55;
-        /* 上车体回转：朝坑（0）→ 朝车厢（0.9rad） */
-        inst.h.excavator.body.rotation.y = swing2 * 0.9;
-      }
-    }
-    if (inst.h.truck) {
-      var trOn = p > 0.27 && p < 0.80;
-      var trg = inst.h.truck.group;
-      if (trg.visible !== trOn) trg.visible = trOn;
-      if (trOn) {
-        var trIn = clamp01((p - 0.27) / 0.09);
-        var trOut = clamp01((p - 0.68) / 0.12);
-        trg.position.z = CFG.lotHalf * 0.50 + (1 - easyOut(trIn)) * 1.1 - easyOut(trOut) * 1.1;
-        /* 装载进度：0.30 前空车、0.30-0.68 逐步装满（用整组轻微下沉表示）、0.68 后后倾卸料 */
-        var load = clamp01((p - 0.30) / 0.34);
-        inst.h.truck.group.position.y = -0.004 * load;
-        inst.h.truck.bed.rotation.x = -0.22 * easeInOutLocal(clamp01((p - 0.66) / 0.08));
-      }
-    }
-
-    /* 工人：脚跟着地做小幅度动作（挖机作业段最活跃），巡逻的来回走 */
-    if (h.workers) {
-      var wOn = p > 0.14 && p < 0.92;
-      var act = 1.0;
-      for (var wi2 = 0; wi2 < h.workers.length; wi2++) {
-        var wk = h.workers[wi2];
-        if (wk.group.visible !== wOn) wk.group.visible = wOn;
-        if (!wOn) continue;
-        var ph = worldT * 2.6 + wk.phase;
-        var pose = wk.group.userData.pose;
-        if (pose === 'bind' || pose === 'work') {
-          /* 蹲/弯腰：手臂小幅往复 */
-          wk.armL.rotation.x = wk.baseRotL + Math.sin(ph * 1.7) * 0.22;
-          wk.armR.rotation.x = wk.baseRotR + Math.sin(ph * 1.7 + 0.9) * 0.22;
-        } else if (pose === 'signal') {
-          /* 指挥：高举的手臂左右招 */
-          wk.armR.rotation.z = Math.sin(ph * 1.2) * 0.35;
-          wk.armL.rotation.x = wk.baseRotL + Math.sin(ph) * 0.08;
-        } else if (pose === 'patrol') {
-          /* 巡逻：来回走动 + 手臂摆动 */
-          var walk = Math.sin(ph * 0.8);
-          wk.group.position.x = wk.group.userData.homeX + walk * 0.22;
-          wk.group.rotation.y = walk > 0 ? PI * 0.5 : -PI * 0.5;
-          wk.legL.rotation.x = Math.sin(ph * 3.4) * 0.5;
-          wk.legR.rotation.x = -Math.sin(ph * 3.4) * 0.5;
-          wk.armL.rotation.x = Math.sin(ph * 3.4) * 0.4;
-          wk.armR.rotation.x = -Math.sin(ph * 3.4) * 0.4;
-        } else {
-          /* 搬运：快步 + 双臂前抱微颤 */
-          wk.legL.rotation.x = Math.sin(ph * 3.0) * 0.45;
-          wk.legR.rotation.x = -Math.sin(ph * 3.0) * 0.45;
-          wk.armL.rotation.x = wk.baseRotL + Math.sin(ph * 3.0) * 0.06;
-          wk.armR.rotation.x = wk.baseRotR - Math.sin(ph * 3.0) * 0.06;
-        }
-      }
-    }
     /* 尘土：作业段最浓，收尾渐淡 */
     if (h.dusts) {
       var dustOn = p > 0.18 && p < 0.94;
@@ -1252,22 +1155,6 @@
     inst.root.traverse(function (o) { if (o.isInstancedMesh) { try { o.dispose(); } catch (e) { /* ignore */ } } });
     var arrs = inst.h.fenceGroups.concat(inst.h.floorGroups, inst.h.scafGroups);
     arrs.forEach(function (x) { Object.keys(x.b).forEach(function (k) { if (x.b[k] && x.b[k].dispose) x.b[k].dispose(); }); });
-    /* 工程机械的批也要释放，否则每次升级都漏一批 geometry */
-    if (inst.h.excavator && inst.h.excavator.batches) {
-      inst.h.excavator.batches.forEach(function (o) {
-        Object.keys(o).forEach(function (k) { if (o[k] && o[k].dispose) o[k].dispose(); });
-      });
-    }
-    if (inst.h.truck && inst.h.truck.batches) {
-      inst.h.truck.batches.forEach(function (o) {
-        Object.keys(o).forEach(function (k) { if (o[k] && o[k].dispose) o[k].dispose(); });
-      });
-    }
-    if (inst.h.workers) inst.h.workers.forEach(function (w) { if (w.group.parent) w.group.parent.remove(w.group); });
-    if (inst.h.dusts) inst.h.dusts.forEach(function (d) {
-      if (d.points.parent) d.points.parent.remove(d.points);
-      try { d.geo.dispose(); d.mat.dispose(); } catch (e) { /* ignore */ }
-    });
     var bb = inst.h.batches;
     Object.keys(bb).forEach(function (k) {
       var v = bb[k];
